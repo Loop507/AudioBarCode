@@ -1,5 +1,4 @@
 # app.py - SoundWave Visualizer by Loop507
-
 import streamlit as st
 import numpy as np
 import librosa
@@ -7,28 +6,28 @@ import os
 import subprocess
 import gc
 import tempfile
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 from moviepy.editor import AudioFileClip, ImageSequenceClip
 
 # Costanti
-MAX_DURATION = 300
-MIN_DURATION = 1.0
-MAX_FILE_SIZE = 200 * 1024 * 1024
+MAX_DURATION: float = 300
+MIN_DURATION: float = 1.0
+MAX_FILE_SIZE: int = 200 * 1024 * 1024
 
-FORMAT_RESOLUTIONS = {
+FORMAT_RESOLUTIONS: Dict[str, Tuple[int, int]] = {
     "16:9": (1280, 720),
     "9:16": (720, 1280),
     "1:1": (720, 720),
     "4:3": (800, 600)
 }
 
-VISUALIZATION_MODES = {
+VISUALIZATION_MODES: Dict[str, str] = {
     "Classic Waveform": "Forma d'onda classica verticale",
     "Dense Matrix": "Matrice densa tipo griglia",
     "Frequency Spectrum": "Spettro a frequenza variabile"
 }
 
-FREQUENCY_COLOR_PRESETS = {
+FREQUENCY_COLOR_PRESETS: Dict[str, Dict[str, str]] = {
     "RGB Classic": {"high": "#FFFF00", "mid": "#00FF00", "low": "#FF0000"},
     "Blue Ocean": {"high": "#00FFFF", "mid": "#0080FF", "low": "#0040FF"},
     "Sunset": {"high": "#FF6600", "mid": "#FF3300", "low": "#CC0000"},
@@ -37,19 +36,22 @@ FREQUENCY_COLOR_PRESETS = {
 }
 
 def check_ffmpeg() -> bool:
+    """Check if FFmpeg is installed."""
     try:
         result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=5)
         return result.returncode == 0
-    except:
+    except Exception:
         return False
 
-def validate_audio_file(uploaded_file) -> bool:
+def validate_audio_file(uploaded_file: st.UploadedFile) -> bool:
+    """Validate the uploaded audio file."""
     if uploaded_file.size > MAX_FILE_SIZE:
         st.error("File troppo grande.")
         return False
     return True
 
 def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Optional[int], Optional[float]]:
+    """Load and process the audio file."""
     try:
         y, sr = librosa.load(file_path, sr=22050, mono=True)
         if len(y) == 0:
@@ -67,27 +69,23 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
         st.error(f"Errore audio: {e}")
         return None, None, None
 
-def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> dict:
+def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[Dict[str, Any]]:
+    """Generate audio features from the audio data."""
     try:
         duration = len(y) / sr
         mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, hop_length=512)
         mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
         mel_norm = (mel_spec_db - mel_spec_db.min()) / (mel_spec_db.max() - mel_spec_db.min() + 1e-9)
-
         stft = librosa.stft(y, hop_length=512, n_fft=2048)
         magnitude_db = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
         stft_norm = (magnitude_db - magnitude_db.min()) / (magnitude_db.max() - magnitude_db.min() + 1e-9)
-
         n_freqs = stft_norm.shape[0]
         freq_low = stft_norm[:n_freqs//3, :]
         freq_mid = stft_norm[n_freqs//3:2*n_freqs//3, :]
         freq_high = stft_norm[2*n_freqs//3:, :]
-
         rms = librosa.feature.rms(y=y, hop_length=512)[0]
         rms_norm = (rms - rms.min()) / (rms.max() - rms.min() + 1e-9)
-
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
-
         return {
             'mel_spectrogram': mel_norm,
             'stft_magnitude': stft_norm,
@@ -106,26 +104,29 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> dict:
         return None
 
 def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
+    """Convert hex color to BGR format."""
     hex_color = hex_color.lstrip('#')
     lv = len(hex_color)
     rgb = tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
     return (rgb[2], rgb[1], rgb[0])
 
-def cleanup_files(*files):
+def cleanup_files(*files: str) -> None:
+    """Clean up temporary files."""
     for file in files:
         try:
             if os.path.exists(file):
                 os.remove(file)
-        except:
+        except Exception:
             pass
 
 def generate_dummy_frames(duration: float, resolution: Tuple[int, int], fps: int) -> list:
-    # Genera frames colorati placeholder per dimostrazione
+    """Generate dummy frames for demonstration."""
     width, height = resolution
     total_frames = int(duration * fps)
     return [(np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)) for _ in range(total_frames)]
 
-def create_video_with_audio(frames: list, audio_path: str, fps: int, output_path: str):
+def create_video_with_audio(frames: list, audio_path: str, fps: int, output_path: str) -> None:
+    """Create a video with audio from frames."""
     try:
         clip = ImageSequenceClip(frames, fps=fps)
         audio = AudioFileClip(audio_path)
@@ -134,38 +135,29 @@ def create_video_with_audio(frames: list, audio_path: str, fps: int, output_path
     except Exception as e:
         st.error(f"Errore generazione video: {e}")
 
-def main():
+def main() -> None:
+    """Main function to run the Streamlit app."""
     st.set_page_config(page_title="SoundWave Visualizer", layout="centered")
     st.title("\U0001F3B5 SoundWave Visualizer")
-
     if not check_ffmpeg():
         st.error("FFmpeg non trovato.")
         return
-
     uploaded = st.file_uploader("Carica file audio", type=["wav", "mp3"])
-
     if uploaded:
         if not validate_audio_file(uploaded):
             return
-
         temp_audio = f"temp_audio_{uploaded.name}"
         with open(temp_audio, "wb") as f:
             f.write(uploaded.read())
-
         with st.spinner("Elaborazione audio..."):
             y, sr, duration = load_and_process_audio(temp_audio)
-
         if y is None:
             return
-
         with st.spinner("Analisi feature..."):
             features = generate_audio_features(y, sr, fps=30)
-
         if features is None:
             return
-
         st.success(f"Audio OK: {duration:.1f}s | BPM: {features['tempo']:.1f}")
-
         st.markdown("---")
         if st.button("\U0001F3AC Genera Video Placeholder"):
             with st.spinner("Generazione video..."):
@@ -176,7 +168,6 @@ def main():
                     with open(output_path, "rb") as f:
                         st.download_button("Scarica Video", f, file_name="output_video.mp4", mime="video/mp4")
                     st.video(output_path)
-
         cleanup_files(temp_audio)
         gc.collect()
 
