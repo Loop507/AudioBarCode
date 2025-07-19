@@ -124,7 +124,6 @@ def generate_dummy_frames(duration: float, resolution: Tuple[int, int], fps: int
     total_frames = int(duration * fps)
     frames = []
     for _ in range(total_frames):
-        # Genera immagine RGB casuale con Pillow
         img = Image.fromarray(np.random.randint(0, 255, (height, width, 3), dtype=np.uint8))
         frames.append(np.array(img))
     return frames
@@ -172,7 +171,7 @@ def main():
         if features is None:
             return
 
-        tempo = features.get('tempo', 0.0) if features else 0.0
+        tempo = float(features.get('tempo', 0.0)) if features else 0.0
         st.success(f"✅ Audio OK: {duration:.1f}s | BPM: {tempo:.1f}")
 
         st.markdown("---")
