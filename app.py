@@ -1,3 +1,5 @@
+# app.py - SoundWave Visualizer by Loop507
+
 import streamlit as st
 import numpy as np
 import librosa
@@ -6,7 +8,7 @@ import subprocess
 import gc
 from typing import Tuple, Optional
 from moviepy.editor import AudioFileClip, ImageSequenceClip
-import cv2
+from PIL import Image, ImageDraw
 
 # Costanti
 MAX_DURATION = 300
@@ -20,11 +22,11 @@ FORMAT_RESOLUTIONS = {
     "4:3": (800, 600)
 }
 
-VISUALIZATION_MODES = [
-    "Classic Waveform",
-    "Dense Matrix",
-    "Frequency Spectrum"
-]
+VISUALIZATION_MODES = {
+    "Classic Waveform": "Forma d'onda classica verticale",
+    "Dense Matrix": "Matrice densa tipo griglia",
+    "Frequency Spectrum": "Spettro a frequenza variabile"
+}
 
 FREQUENCY_COLOR_PRESETS = {
     "RGB Classic": {"high": "#FFFF00", "mid": "#00FF00", "low": "#FF0000"},
@@ -43,7 +45,7 @@ def check_ffmpeg() -> bool:
 
 def validate_audio_file(uploaded_file) -> bool:
     if uploaded_file.size > MAX_FILE_SIZE:
-        st.error("File troppo grande (max 200 MB).")
+        st.error("File troppo grande.")
         return False
     return True
 
@@ -68,6 +70,10 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
 def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[dict]:
     try:
         duration = len(y) / sr
+        mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, hop_length=512)
+        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+        mel_norm = (mel_spec_db - mel_spec_db.min()) / (mel_spec_db.max() - mel_spec_db.min() + 1e-9)
+
         stft = librosa.stft(y, hop_length=512, n_fft=2048)
         magnitude_db = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
         stft_norm = (magnitude_db - magnitude_db.min()) / (magnitude_db.max() - magnitude_db.min() + 1e-9)
@@ -80,13 +86,10 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[dict]:
         rms = librosa.feature.rms(y=y, hop_length=512)[0]
         rms_norm = (rms - rms.min()) / (rms.max() - rms.min() + 1e-9)
 
-        tempo, beats = 0.0, []
-        try:
-            tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
-        except Exception as e:
-            st.warning(f"BPM non rilevato: {e}")
+        tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
 
         return {
+            'mel_spectrogram': mel_norm,
             'stft_magnitude': stft_norm,
             'freq_low': freq_low,
             'freq_mid': freq_mid,
@@ -99,51 +102,47 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[dict]:
             'duration': duration
         }
     except Exception as e:
-        st.error(f"Errore feature audio: {e}")
+        st.error(f"Errore feature: {e}")
         return None
 
-def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
+def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
     hex_color = hex_color.lstrip('#')
     lv = len(hex_color)
-    rgb = tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
-    return (rgb[2], rgb[1], rgb[0])
+    return tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
 
 def generate_visual_frames(features: dict, duration: float, resolution: Tuple[int,int], fps: int, mode: str, color_preset: dict) -> list:
     width, height = resolution
     total_frames = int(duration * fps)
 
-    # Convert hex colors to BGR tuples for OpenCV
-    color_low = hex_to_bgr(color_preset["low"])
-    color_mid = hex_to_bgr(color_preset["mid"])
-    color_high = hex_to_bgr(color_preset["high"])
+    color_low = hex_to_rgb(color_preset["low"])
+    color_mid = hex_to_rgb(color_preset["mid"])
+    color_high = hex_to_rgb(color_preset["high"])
 
     frames = []
     stft = features['stft_magnitude']
     freq_low = features['freq_low']
     freq_mid = features['freq_mid']
     freq_high = features['freq_high']
-    rms = features['rms_energy']
 
     n_time = stft.shape[1]
     samples_per_frame = max(1, n_time // total_frames)
 
     for i in range(total_frames):
-        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        frame_img = Image.new("RGB", (width, height), (0, 0, 0))
+        draw = ImageDraw.Draw(frame_img)
 
-        # Indice tempo per i dati STFT
         idx = i * samples_per_frame
         if idx >= n_time:
             idx = n_time - 1
 
         if mode == "Classic Waveform":
-            # Disegna barre verticali basate su RMS e frequenze
             bar_width = max(1, width // 60)
             spacing = bar_width
             base_y = height // 2
 
             for b in range(60):
                 x = b * (bar_width + spacing) + 10
-                # Prendi valori di intensità da freq_low, freq_mid, freq_high normalizzati
+
                 low_val = freq_low[:, idx].mean()
                 mid_val = freq_mid[:, idx].mean()
                 high_val = freq_high[:, idx].mean()
@@ -152,13 +151,11 @@ def generate_visual_frames(features: dict, duration: float, resolution: Tuple[in
                 height_mid = int(mid_val * (height // 4))
                 height_high = int(high_val * (height // 4))
 
-                # Disegna barre verticali con colori per low/mid/high (stacked)
-                cv2.rectangle(frame, (x, base_y), (x + bar_width, base_y - height_low), color_low, -1)
-                cv2.rectangle(frame, (x, base_y - height_low), (x + bar_width, base_y - height_low - height_mid), color_mid, -1)
-                cv2.rectangle(frame, (x, base_y - height_low - height_mid), (x + bar_width, base_y - height_low - height_mid - height_high), color_high, -1)
+                draw.rectangle([x, base_y - height_low, x + bar_width, base_y], fill=color_low)
+                draw.rectangle([x, base_y - height_low - height_mid, x + bar_width, base_y - height_low], fill=color_mid)
+                draw.rectangle([x, base_y - height_low - height_mid - height_high, x + bar_width, base_y - height_low - height_mid], fill=color_high)
 
         elif mode == "Dense Matrix":
-            # Crea una griglia colorata basata sul valore STFT all'indice
             grid_rows = 30
             grid_cols = 40
             cell_width = width // grid_cols
@@ -166,35 +163,39 @@ def generate_visual_frames(features: dict, duration: float, resolution: Tuple[in
 
             for row in range(grid_rows):
                 for col in range(grid_cols):
-                    # Prendi un valore da stft in funzione di riga, colonna e tempo
                     freq_idx = int(row * (stft.shape[0] / grid_rows))
                     time_idx = min(idx + col, stft.shape[1] - 1)
                     val = stft[freq_idx, time_idx]
-                    # Colore tra low-mid-high interpolato
+
                     if freq_idx < stft.shape[0] // 3:
                         color = color_low
                     elif freq_idx < 2 * stft.shape[0] // 3:
                         color = color_mid
                     else:
                         color = color_high
-                    # Modula l'intensità
-                    intensity = int(val * 255)
-                    bgr = tuple(min(255, int(c * (intensity / 255))) for c in color)
-                    top_left = (col * cell_width, row * cell_height)
-                    bottom_right = ((col + 1) * cell_width, (row + 1) * cell_height)
-                    cv2.rectangle(frame, top_left, bottom_right, bgr, -1)
+
+                    # Modula l'intensità del colore
+                    r = int(color[0] * val)
+                    g = int(color[1] * val)
+                    b = int(color[2] * val)
+                    fill_color = (r, g, b)
+
+                    x1 = col * cell_width
+                    y1 = row * cell_height
+                    x2 = x1 + cell_width
+                    y2 = y1 + cell_height
+
+                    draw.rectangle([x1, y1, x2, y2], fill=fill_color)
 
         elif mode == "Frequency Spectrum":
-            # Spettro orizzontale: disegna barre per low, mid, high frequenze
             bar_count = 30
-            bar_width = width // (bar_count * 2)
+            bar_width = width // (bar_count * 3)
             spacing = bar_width
             base_y = height - 20
 
             for b in range(bar_count):
                 x = b * (bar_width + spacing) + 10
 
-                # Media valori frequenze intorno a b nel tempo idx
                 low_idx = min(b, freq_low.shape[0]-1)
                 mid_idx = min(b, freq_mid.shape[0]-1)
                 high_idx = min(b, freq_high.shape[0]-1)
@@ -207,12 +208,11 @@ def generate_visual_frames(features: dict, duration: float, resolution: Tuple[in
                 height_mid = int(mid_val * (height // 3))
                 height_high = int(high_val * (height // 3))
 
-                # Barre da basso verso l'alto
-                cv2.rectangle(frame, (x, base_y), (x + bar_width, base_y - height_low), color_low, -1)
-                cv2.rectangle(frame, (x + bar_width, base_y), (x + 2 * bar_width, base_y - height_mid), color_mid, -1)
-                cv2.rectangle(frame, (x + 2 * bar_width, base_y), (x + 3 * bar_width, base_y - height_high), color_high, -1)
+                draw.rectangle([x, base_y - height_low, x + bar_width, base_y], fill=color_low)
+                draw.rectangle([x + bar_width, base_y - height_mid, x + 2*bar_width, base_y], fill=color_mid)
+                draw.rectangle([x + 2*bar_width, base_y - height_high, x + 3*bar_width, base_y], fill=color_high)
 
-        frames.append(frame)
+        frames.append(np.array(frame_img))
 
     return frames
 
@@ -235,7 +235,7 @@ def cleanup_files(*files):
 
 def main():
     st.set_page_config(page_title="SoundWave Visualizer by Loop507", layout="centered")
-    st.title("\U0001F3B5 SoundWave Visualizer ")
+    st.title("\U0001F3B5 SoundWave Visualizer")
     st.markdown("<small>by Loop507</small>", unsafe_allow_html=True)
 
     if not check_ffmpeg():
@@ -261,7 +261,7 @@ def main():
         return
 
     fps = st.selectbox("Seleziona FPS", options=[5,10,20,30], index=3)
-    mode = st.selectbox("Modalità Visualizzazione", options=VISUALIZATION_MODES, index=0)
+    mode = st.selectbox("Modalità Visualizzazione", options=list(VISUALIZATION_MODES.keys()), index=0)
     color_preset_name = st.selectbox("Seleziona palette colori", options=list(FREQUENCY_COLOR_PRESETS.keys()), index=0)
     color_preset = FREQUENCY_COLOR_PRESETS[color_preset_name]
 
@@ -276,7 +276,7 @@ def main():
     st.markdown("---")
     if st.button("\U0001F3AC Genera Video"):
         with st.spinner("Generazione video..."):
-            resolution = FORMAT_RESOLUTIONS["16:9"]  # Puoi aggiungere selettore formato se vuoi
+            resolution = FORMAT_RESOLUTIONS["16:9"]  # puoi aggiungere selettore formato
             frames = generate_visual_frames(features, duration, resolution, fps, mode, color_preset)
             output_path = "output_video.mp4"
             create_video_with_audio(frames, temp_audio, fps, output_path)
