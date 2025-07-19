@@ -1,6 +1,5 @@
 # app.py - SoundWave Visualizer by Loop507 (Streamlit Cloud Compatible)
 import streamlit as st
-from streamlit.runtime.uploaded_file_manager import UploadedFile
 import numpy as np
 import librosa
 import os
@@ -47,7 +46,7 @@ def check_ffmpeg() -> bool:
     except Exception:
         return False
 
-def validate_audio_file(uploaded_file: UploadedFile) -> bool:
+def validate_audio_file(uploaded_file) -> bool:
     """Validate the uploaded audio file."""
     if uploaded_file.size > MAX_FILE_SIZE:
         st.error("File troppo grande.")
@@ -91,7 +90,17 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[Dict[s
         freq_high = stft_norm[2*n_freqs//3:, :]
         rms = librosa.feature.rms(y=y, hop_length=512)[0]
         rms_norm = (rms - rms.min()) / (rms.max() - rms.min() + 1e-9)
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
+        try:
+            tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
+            # Ensure tempo is a scalar value
+            if isinstance(tempo, np.ndarray):
+                tempo = float(tempo[0]) if len(tempo) > 0 else 120.0
+            else:
+                tempo = float(tempo)
+        except Exception:
+            tempo = 120.0  # Default BPM
+            beats = np.array([])
+        
         return {
             'mel_spectrogram': mel_norm,
             'stft_magnitude': stft_norm,
