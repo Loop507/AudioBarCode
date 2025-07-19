@@ -1,5 +1,6 @@
 # app.py - SoundWave Visualizer by Loop507 (Streamlit Cloud Compatible)
 import streamlit as st
+from streamlit.runtime.uploaded_file_manager import UploadedFile
 import numpy as np
 import librosa
 import os
@@ -46,7 +47,7 @@ def check_ffmpeg() -> bool:
     except Exception:
         return False
 
-def validate_audio_file(uploaded_file: st.UploadedFile) -> bool:
+def validate_audio_file(uploaded_file: UploadedFile) -> bool:
     """Validate the uploaded audio file."""
     if uploaded_file.size > MAX_FILE_SIZE:
         st.error("File troppo grande.")
