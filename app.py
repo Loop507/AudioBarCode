@@ -1,4 +1,4 @@
-# app.py - SoundWave Visualizer by Loop507
+# app.py - SoundWave Visualizer by Loop507 (Fixed)
 import streamlit as st
 import numpy as np
 import librosa
@@ -6,8 +6,8 @@ import os
 import subprocess
 import gc
 import tempfile
+import cv2
 from typing import Tuple, Optional, Dict, Any
-from moviepy.editor import AudioFileClip, ImageSequenceClip
 
 # Costanti
 MAX_DURATION: float = 300
@@ -50,6 +50,7 @@ def validate_audio_file(uploaded_file: st.UploadedFile) -> bool:
         return False
     return True
 
+@st.cache_data
 def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Optional[int], Optional[float]]:
     """Load and process the audio file."""
     try:
@@ -69,6 +70,7 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
         st.error(f"Errore audio: {e}")
         return None, None, None
 
+@st.cache_data
 def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[Dict[str, Any]]:
     """Generate audio features from the audio data."""
     try:
@@ -119,57 +121,176 @@ def cleanup_files(*files: str) -> None:
         except Exception:
             pass
 
-def generate_dummy_frames(duration: float, resolution: Tuple[int, int], fps: int) -> list:
-    """Generate dummy frames for demonstration."""
+def generate_visualization_frame(features: Dict[str, Any], frame_idx: int, mode: str, 
+                               colors: Dict[str, str], resolution: Tuple[int, int]) -> np.ndarray:
+    """Generate a visualization frame based on audio features."""
     width, height = resolution
-    total_frames = int(duration * fps)
-    return [(np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)) for _ in range(total_frames)]
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    
+    # Get time index for this frame
+    fps = 30
+    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
+    time_idx = min(time_idx, features['mel_spectrogram'].shape[1] - 1)
+    
+    if mode == "Classic Waveform":
+        # Simple waveform visualization
+        mel_slice = features['mel_spectrogram'][:, time_idx]
+        for i, intensity in enumerate(mel_slice):
+            bar_height = int(intensity * height * 0.8)
+            bar_x = int((i / len(mel_slice)) * width)
+            color = hex_to_bgr(colors['mid'])
+            cv2.rectangle(frame, (bar_x, height - bar_height), 
+                         (bar_x + 3, height), color, -1)
+    
+    elif mode == "Dense Matrix":
+        # Grid-like visualization
+        cell_size = 8
+        for y in range(0, height, cell_size):
+            for x in range(0, width, cell_size):
+                mel_idx = min(int((y / height) * 128), 127)
+                intensity = features['mel_spectrogram'][mel_idx, time_idx]
+                color_val = int(intensity * 255)
+                color = (color_val, color_val // 2, color_val // 4)
+                cv2.rectangle(frame, (x, y), (x + cell_size, y + cell_size), color, -1)
+    
+    elif mode == "Frequency Spectrum":
+        # Frequency-based coloring
+        low_energy = np.mean(features['freq_low'][:, time_idx])
+        mid_energy = np.mean(features['freq_mid'][:, time_idx])
+        high_energy = np.mean(features['freq_high'][:, time_idx])
+        
+        # Create circles based on frequency content
+        center = (width // 2, height // 2)
+        low_radius = int(low_energy * min(width, height) * 0.3)
+        mid_radius = int(mid_energy * min(width, height) * 0.2)
+        high_radius = int(high_energy * min(width, height) * 0.1)
+        
+        cv2.circle(frame, center, low_radius, hex_to_bgr(colors['low']), -1)
+        cv2.circle(frame, center, mid_radius, hex_to_bgr(colors['mid']), -1)
+        cv2.circle(frame, center, high_radius, hex_to_bgr(colors['high']), -1)
+    
+    return frame
 
-def create_video_with_audio(frames: list, audio_path: str, fps: int, output_path: str) -> None:
-    """Create a video with audio from frames."""
+def create_video_with_opencv(frames: list, audio_path: str, fps: int, output_path: str) -> None:
+    """Create a video using OpenCV and combine with audio using FFmpeg."""
     try:
-        clip = ImageSequenceClip(frames, fps=fps)
-        audio = AudioFileClip(audio_path)
-        final = clip.set_audio(audio)
-        final.write_videofile(output_path, codec="libx264", audio_codec="aac")
+        # Create temporary video without audio
+        temp_video = "temp_video.mp4"
+        height, width = frames[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_video, fourcc, fps, (width, height))
+        
+        for frame in frames:
+            out.write(frame)
+        out.release()
+        
+        # Combine video with audio using FFmpeg
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', temp_video,
+            '-i', audio_path,
+            '-c:v', 'libx264',
+            '-c:a', 'aac',
+            '-shortest',
+            output_path
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        
+        # Cleanup temp video
+        cleanup_files(temp_video)
+        
     except Exception as e:
         st.error(f"Errore generazione video: {e}")
 
 def main() -> None:
     """Main function to run the Streamlit app."""
     st.set_page_config(page_title="SoundWave Visualizer", layout="centered")
-    st.title("\U0001F3B5 SoundWave Visualizer")
+    st.title("🎵 SoundWave Visualizer")
+    
     if not check_ffmpeg():
-        st.error("FFmpeg non trovato.")
+        st.error("FFmpeg non trovato. Installalo per generare video.")
         return
-    uploaded = st.file_uploader("Carica file audio", type=["wav", "mp3"])
+    
+    # Interface controls
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        mode = st.selectbox("Modalità visualizzazione", list(VISUALIZATION_MODES.keys()))
+        st.caption(VISUALIZATION_MODES[mode])
+    
+    with col2:
+        color_preset = st.selectbox("Schema colori", list(FREQUENCY_COLOR_PRESETS.keys()))
+        colors = FREQUENCY_COLOR_PRESETS[color_preset]
+    
+    resolution_format = st.selectbox("Formato", list(FORMAT_RESOLUTIONS.keys()))
+    resolution = FORMAT_RESOLUTIONS[resolution_format]
+    
+    uploaded = st.file_uploader("Carica file audio", type=["wav", "mp3", "m4a", "flac"])
+    
     if uploaded:
         if not validate_audio_file(uploaded):
             return
-        temp_audio = f"temp_audio_{uploaded.name}"
-        with open(temp_audio, "wb") as f:
-            f.write(uploaded.read())
-        with st.spinner("Elaborazione audio..."):
-            y, sr, duration = load_and_process_audio(temp_audio)
-        if y is None:
-            return
-        with st.spinner("Analisi feature..."):
-            features = generate_audio_features(y, sr, fps=30)
-        if features is None:
-            return
-        st.success(f"Audio OK: {duration:.1f}s | BPM: {features['tempo']:.1f}")
-        st.markdown("---")
-        if st.button("\U0001F3AC Genera Video Placeholder"):
-            with st.spinner("Generazione video..."):
-                dummy_frames = generate_dummy_frames(duration, (1280, 720), 30)
-                output_path = "output_video.mp4"
-                create_video_with_audio(dummy_frames, temp_audio, 30, output_path)
+        
+        # Use temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded.name.split('.')[-1]}") as temp_file:
+            temp_file.write(uploaded.read())
+            temp_audio = temp_file.name
+        
+        try:
+            with st.spinner("Elaborazione audio..."):
+                y, sr, duration = load_and_process_audio(temp_audio)
+            
+            if y is None:
+                return
+            
+            with st.spinner("Analisi feature audio..."):
+                features = generate_audio_features(y, sr, fps=30)
+            
+            if features is None:
+                return
+            
+            st.success(f"✅ Audio processato: {duration:.1f}s | BPM: {features['tempo']:.1f}")
+            st.markdown("---")
+            
+            if st.button("🎬 Genera Visualizzazione Video"):
+                fps = 30
+                total_frames = int(duration * fps)
+                
+                with st.spinner(f"Generazione {total_frames} frame..."):
+                    frames = []
+                    progress_bar = st.progress(0)
+                    
+                    for i in range(total_frames):
+                        frame = generate_visualization_frame(features, i, mode, colors, resolution)
+                        frames.append(frame)
+                        progress_bar.progress((i + 1) / total_frames)
+                
+                output_path = "output_visualization.mp4"
+                
+                with st.spinner("Creazione video finale..."):
+                    create_video_with_opencv(frames, temp_audio, fps, output_path)
+                
                 if os.path.exists(output_path):
-                    with open(output_path, "rb") as f:
-                        st.download_button("Scarica Video", f, file_name="output_video.mp4", mime="video/mp4")
+                    st.success("🎉 Video generato con successo!")
+                    
+                    # Show video
                     st.video(output_path)
-        cleanup_files(temp_audio)
-        gc.collect()
+                    
+                    # Download button
+                    with open(output_path, "rb") as f:
+                        st.download_button(
+                            "📥 Scarica Video",
+                            f.read(),
+                            file_name=f"soundwave_{mode.lower().replace(' ', '_')}.mp4",
+                            mime="video/mp4"
+                        )
+                    
+                    # Cleanup
+                    cleanup_files(output_path)
+                
+        finally:
+            cleanup_files(temp_audio)
+            gc.collect()
 
 if __name__ == "__main__":
     main()
