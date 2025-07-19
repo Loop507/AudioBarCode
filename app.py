@@ -10,9 +10,9 @@ from typing import Tuple, Optional
 from moviepy.editor import AudioFileClip, ImageSequenceClip
 
 # Costanti
-MAX_DURATION = 300  # 5 minuti max
+MAX_DURATION = 300
 MIN_DURATION = 1.0
-MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB max
+MAX_FILE_SIZE = 200 * 1024 * 1024
 
 FORMAT_RESOLUTIONS = {
     "16:9": (1280, 720),
@@ -25,7 +25,9 @@ def check_ffmpeg() -> bool:
     try:
         result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=5)
         return result.returncode == 0
-    except:
+    except Exception as e:
+        st.error("⚠️ FFmpeg non è installato o non è accessibile.")
+        st.error(f"Dettagli: {e}")
         return False
 
 def validate_audio_file(uploaded_file) -> bool:
@@ -55,8 +57,6 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
 def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[dict]:
     try:
         duration = len(y) / sr
-
-        # Calcolo spettrogramma STFT
         stft = librosa.stft(y, hop_length=512, n_fft=2048)
         magnitude_db = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
         stft_norm = (magnitude_db - magnitude_db.min()) / (magnitude_db.max() - magnitude_db.min() + 1e-9)
@@ -73,7 +73,7 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[dict]:
         try:
             tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
         except Exception as e:
-            st.warning(f"Warning beat track fallito: {e}")
+            st.warning(f"⚠️ Rilevamento BPM non riuscito: {e}")
 
         return {
             'stft_magnitude': stft_norm,
@@ -115,16 +115,15 @@ def create_video_with_audio(frames: list, audio_path: str, fps: int, output_path
 
 def main():
     st.set_page_config(page_title="SoundWave Visualizer by Loop507", layout="centered")
-    st.title("\U0001F3B5 SoundWave Visualizer by Loop507")
+    st.title("🎵 SoundWave Visualizer by Loop507")
 
     if not check_ffmpeg():
-        st.error("FFmpeg non trovato.")
-        return
+        st.error("❌ FFmpeg non disponibile. Aggiungilo nel file packages.txt.")
+        st.stop()
 
     uploaded = st.file_uploader("Carica file audio", type=["wav", "mp3"])
-
-    fps = st.selectbox("Seleziona FPS", options=[5, 10, 20, 30], index=3)
-    formato = st.selectbox("Seleziona formato video", options=list(FORMAT_RESOLUTIONS.keys()), index=0)
+    fps = st.selectbox("🎞️ FPS", [5, 10, 20, 30], index=3)
+    formato = st.selectbox("📐 Formato Video", list(FORMAT_RESOLUTIONS.keys()), index=0)
 
     if uploaded:
         if not validate_audio_file(uploaded):
@@ -134,36 +133,34 @@ def main():
         with open(temp_audio, "wb") as f:
             f.write(uploaded.read())
 
-        with st.spinner("Elaborazione audio..."):
+        with st.spinner("🎧 Analisi audio..."):
             y, sr, duration = load_and_process_audio(temp_audio)
 
         if y is None:
             cleanup_files(temp_audio)
             return
 
-        with st.spinner("Analisi feature audio..."):
-            features = generate_audio_features(y, sr, fps=fps)
-
-        st.write("Features ottenute:", features)  # debug
+        with st.spinner("📊 Estrazione feature..."):
+            features = generate_audio_features(y, sr, fps)
 
         if not features or 'tempo' not in features or features['tempo'] is None:
-            st.error("Analisi tempo non disponibile o errore nelle feature.")
+            st.error("❌ Analisi BPM non riuscita.")
             cleanup_files(temp_audio)
             return
 
-        st.success(f"Audio OK: {duration:.1f}s | BPM: {features['tempo']:.1f}")
-
+        st.success(f"✅ Audio OK: {duration:.1f}s | BPM: {features['tempo']:.1f}")
         st.markdown("---")
 
-        if st.button("\U0001F3AC Genera Video Placeholder"):
-            with st.spinner("Generazione video..."):
+        if st.button("🎬 Genera Video Placeholder"):
+            with st.spinner("🎥 Rendering video..."):
                 resolution = FORMAT_RESOLUTIONS[formato]
-                dummy_frames = generate_dummy_frames(duration, resolution, fps)
+                frames = generate_dummy_frames(duration, resolution, fps)
                 output_path = "output_video.mp4"
-                create_video_with_audio(dummy_frames, temp_audio, fps, output_path)
+                create_video_with_audio(frames, temp_audio, fps, output_path)
+
                 if os.path.exists(output_path):
                     with open(output_path, "rb") as f:
-                        st.download_button("Scarica Video", f, file_name="output_video.mp4", mime="video/mp4")
+                        st.download_button("⬇️ Scarica Video", f, file_name="output_video.mp4", mime="video/mp4")
                     st.video(output_path)
 
         cleanup_files(temp_audio)
