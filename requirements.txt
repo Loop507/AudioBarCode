@@ -1,5 +1,8 @@
 streamlit
 numpy
 librosa
+moviepy
+scipy
+soundfile
 matplotlib
 Pillow
