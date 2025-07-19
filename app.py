@@ -10,9 +10,9 @@ from typing import Tuple, Optional
 from moviepy.editor import AudioFileClip, ImageSequenceClip
 
 # Costanti
-MAX_DURATION = 300  # 5 minuti
+MAX_DURATION = 300  # 5 minuti max
 MIN_DURATION = 1.0
-MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
+MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB max
 
 FORMAT_RESOLUTIONS = {
     "16:9": (1280, 720),
@@ -69,7 +69,11 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[dict]:
         rms = librosa.feature.rms(y=y, hop_length=512)[0]
         rms_norm = (rms - rms.min()) / (rms.max() - rms.min() + 1e-9)
 
-        tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
+        tempo, beats = 0.0, []
+        try:
+            tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
+        except Exception as e:
+            st.warning(f"Warning beat track fallito: {e}")
 
         return {
             'stft_magnitude': stft_norm,
@@ -120,6 +124,7 @@ def main():
     uploaded = st.file_uploader("Carica file audio", type=["wav", "mp3"])
 
     fps = st.selectbox("Seleziona FPS", options=[5, 10, 20, 30], index=3)
+    formato = st.selectbox("Seleziona formato video", options=list(FORMAT_RESOLUTIONS.keys()), index=0)
 
     if uploaded:
         if not validate_audio_file(uploaded):
@@ -139,13 +144,10 @@ def main():
         with st.spinner("Analisi feature audio..."):
             features = generate_audio_features(y, sr, fps=fps)
 
-        if features is None:
-            st.error("Errore nell'analisi delle feature audio.")
-            cleanup_files(temp_audio)
-            return
+        st.write("Features ottenute:", features)  # debug
 
-        if 'tempo' not in features:
-            st.error("Analisi tempo non disponibile.")
+        if not features or 'tempo' not in features or features['tempo'] is None:
+            st.error("Analisi tempo non disponibile o errore nelle feature.")
             cleanup_files(temp_audio)
             return
 
@@ -155,7 +157,8 @@ def main():
 
         if st.button("\U0001F3AC Genera Video Placeholder"):
             with st.spinner("Generazione video..."):
-                dummy_frames = generate_dummy_frames(duration, (1280, 720), fps)
+                resolution = FORMAT_RESOLUTIONS[formato]
+                dummy_frames = generate_dummy_frames(duration, resolution, fps)
                 output_path = "output_video.mp4"
                 create_video_with_audio(dummy_frames, temp_audio, fps, output_path)
                 if os.path.exists(output_path):
