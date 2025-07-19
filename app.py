@@ -6,9 +6,10 @@ import librosa
 import os
 import subprocess
 import gc
+import cv2
 from typing import Tuple, Optional
 from moviepy.editor import AudioFileClip, ImageSequenceClip
-from PIL import Image  # per generare frame senza cv2
+from PIL import Image
 
 # Costanti
 MAX_DURATION = 300
@@ -119,13 +120,47 @@ def cleanup_files(*files):
         except:
             pass
 
-def generate_dummy_frames(duration: float, resolution: Tuple[int, int], fps: int) -> list:
+def generate_spectrum_frames(features: dict, resolution: Tuple[int, int], fps: int, mode: str) -> list:
+    import cv2  # assicurati di avere opencv-python installato
+
     width, height = resolution
+    duration = features['duration']
     total_frames = int(duration * fps)
+
+    low = features['freq_low']
+    mid = features['freq_mid']
+    high = features['freq_high']
+
+    time_steps = low.shape[1]
+    frames_per_video_frame = max(1, time_steps // total_frames)
+
     frames = []
-    for _ in range(total_frames):
-        img = Image.fromarray(np.random.randint(0, 255, (height, width, 3), dtype=np.uint8))
-        frames.append(np.array(img))
+
+    def draw_spectrum_column(img, spectrum, x_start, w, h):
+        bins = len(spectrum)
+        for j, val in enumerate(spectrum):
+            y = int(h - (j / bins) * h)
+            col_height = int(val * h)
+            cv2.rectangle(img, (x_start, y - col_height), (x_start + w - 1, y), (255, 255, 255), -1)
+
+    for i in range(total_frames):
+        start_idx = i * frames_per_video_frame
+        end_idx = start_idx + frames_per_video_frame
+
+        low_slice = np.mean(low[:, start_idx:end_idx], axis=1) if end_idx <= time_steps else low[:, start_idx:]
+        mid_slice = np.mean(mid[:, start_idx:end_idx], axis=1) if end_idx <= time_steps else mid[:, start_idx:]
+        high_slice = np.mean(high[:, start_idx:end_idx], axis=1) if end_idx <= time_steps else high[:, start_idx:]
+
+        img = np.zeros((height, width, 3), dtype=np.uint8)
+        band_w = width // 3
+
+        if mode == "Frequency Spectrum":
+            draw_spectrum_column(img, low_slice, 0, band_w, height)
+            draw_spectrum_column(img, mid_slice, band_w, band_w, height)
+            draw_spectrum_column(img, high_slice, band_w * 2, band_w, height)
+
+        frames.append(img)
+
     return frames
 
 def create_video_with_audio(frames: list, audio_path: str, fps: int, output_path: str):
@@ -133,7 +168,7 @@ def create_video_with_audio(frames: list, audio_path: str, fps: int, output_path
         clip = ImageSequenceClip(frames, fps=fps)
         audio = AudioFileClip(audio_path)
         final = clip.set_audio(audio)
-        final.write_videofile(output_path, codec="libx264", audio_codec="aac")
+        final.write_videofile(output_path, codec="libx264", audio_codec="aac", verbose=False, logger=None)
     except Exception as e:
         st.error(f"Errore generazione video: {e}")
 
@@ -175,14 +210,14 @@ def main():
         st.success(f"✅ Audio OK: {duration:.1f}s | BPM: {tempo:.1f}")
 
         st.markdown("---")
-        if st.button("\U0001F3AC Genera Video Placeholder"):
-            with st.spinner("Generazione video..."):
-                dummy_frames = generate_dummy_frames(duration, resolution, fps)
-                output_path = "output_video.mp4"
-                create_video_with_audio(dummy_frames, temp_audio, fps, output_path)
+        if st.button("\U0001F3AC Genera Video Spettro"):
+            with st.spinner("Generazione video spettro..."):
+                frames = generate_spectrum_frames(features, resolution, fps, mode="Frequency Spectrum")
+                output_path = "output_spectrum_video.mp4"
+                create_video_with_audio(frames, temp_audio, fps, output_path)
                 if os.path.exists(output_path):
                     with open(output_path, "rb") as f:
-                        st.download_button("Scarica Video", f, file_name="output_video.mp4", mime="video/mp4")
+                        st.download_button("Scarica Video Spettro", f, file_name="output_spectrum_video.mp4", mime="video/mp4")
                     st.video(output_path)
 
         cleanup_files(temp_audio)
