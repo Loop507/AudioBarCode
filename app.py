@@ -73,7 +73,7 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> Optional[dict]:
         try:
             tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=512)
         except Exception as e:
-            st.warning(f"⚠️ Rilevamento BPM non riuscito: {e}")
+            st.warning(f"⚠️ BPM non rilevato: {e}")
 
         return {
             'stft_magnitude': stft_norm,
@@ -121,7 +121,7 @@ def main():
         st.error("❌ FFmpeg non disponibile. Aggiungilo nel file packages.txt.")
         st.stop()
 
-    uploaded = st.file_uploader("Carica file audio", type=["wav", "mp3"])
+    uploaded = st.file_uploader("🎧 Carica file audio (max 200MB)", type=["wav", "mp3"])
     fps = st.selectbox("🎞️ FPS", [5, 10, 20, 30], index=3)
     formato = st.selectbox("📐 Formato Video", list(FORMAT_RESOLUTIONS.keys()), index=0)
 
@@ -143,12 +143,16 @@ def main():
         with st.spinner("📊 Estrazione feature..."):
             features = generate_audio_features(y, sr, fps)
 
-        if not features or 'tempo' not in features or features['tempo'] is None:
-            st.error("❌ Analisi BPM non riuscita.")
+        if not features:
+            st.error("❌ Analisi audio fallita.")
             cleanup_files(temp_audio)
             return
 
-        st.success(f"✅ Audio OK: {duration:.1f}s | BPM: {features['tempo']:.1f}")
+        tempo_val = features.get('tempo', 0.0)
+        if tempo_val is None or not isinstance(tempo_val, (int, float)):
+            tempo_val = 0.0
+
+        st.success(f"✅ Audio OK: {duration:.1f}s | BPM: {tempo_val:.1f}")
         st.markdown("---")
 
         if st.button("🎬 Genera Video Placeholder"):
