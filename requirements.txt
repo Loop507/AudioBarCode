@@ -1,8 +1,8 @@
-streamlit
-numpy
-librosa
-moviepy
-scipy
-soundfile
-matplotlib
-Pillow
+streamlit>=1.25
+numpy>=1.24
+librosa>=0.10.0
+moviepy==1.0.3
+scipy>=1.11
+soundfile>=0.12
+matplotlib>=3.6
+Pillow>=9.0
