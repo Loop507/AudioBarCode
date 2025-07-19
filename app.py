@@ -2,15 +2,13 @@
 
 import streamlit as st
 import numpy as np
-import cv2
 import librosa
 import os
 import subprocess
 import gc
-import shutil
-import contextlib
 import tempfile
 from typing import Tuple, Optional
+from moviepy.editor import AudioFileClip, ImageSequenceClip
 
 # Costanti
 MAX_DURATION = 300
@@ -121,6 +119,21 @@ def cleanup_files(*files):
         except:
             pass
 
+def generate_dummy_frames(duration: float, resolution: Tuple[int, int], fps: int) -> list:
+    # Genera frames colorati placeholder per dimostrazione
+    width, height = resolution
+    total_frames = int(duration * fps)
+    return [(np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)) for _ in range(total_frames)]
+
+def create_video_with_audio(frames: list, audio_path: str, fps: int, output_path: str):
+    try:
+        clip = ImageSequenceClip(frames, fps=fps)
+        audio = AudioFileClip(audio_path)
+        final = clip.set_audio(audio)
+        final.write_videofile(output_path, codec="libx264", audio_codec="aac")
+    except Exception as e:
+        st.error(f"Errore generazione video: {e}")
+
 def main():
     st.set_page_config(page_title="SoundWave Visualizer", layout="centered")
     st.title("\U0001F3B5 SoundWave Visualizer")
@@ -153,10 +166,19 @@ def main():
 
         st.success(f"Audio OK: {duration:.1f}s | BPM: {features['tempo']:.1f}")
 
+        st.markdown("---")
+        if st.button("\U0001F3AC Genera Video Placeholder"):
+            with st.spinner("Generazione video..."):
+                dummy_frames = generate_dummy_frames(duration, (1280, 720), 30)
+                output_path = "output_video.mp4"
+                create_video_with_audio(dummy_frames, temp_audio, 30, output_path)
+                if os.path.exists(output_path):
+                    with open(output_path, "rb") as f:
+                        st.download_button("Scarica Video", f, file_name="output_video.mp4", mime="video/mp4")
+                    st.video(output_path)
+
         cleanup_files(temp_audio)
         gc.collect()
-
-        st.info("Modulo generazione video in arrivo…")
 
 if __name__ == "__main__":
     main()
