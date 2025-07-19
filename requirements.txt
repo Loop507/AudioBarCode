@@ -6,3 +6,4 @@ scipy>=1.11
 soundfile>=0.12
 matplotlib>=3.6
 Pillow>=9.0
+opencv-python
