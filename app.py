@@ -18,7 +18,7 @@ import sys
 # import importlib # Non più necessario se non gestisci import dinamici dopo la rimozione
 
 # ==========================================
-# GESTIONE DELLE DIPENDENZE - ORA GESTITA TRAMITE requirements.txt
+# GESTIONE DELLE DIPENDENZE - ORA GESTITA TRAMite requirements.txt
 # La sezione `install_and_import` è stata rimossa.
 # Assicurati di avere un file requirements.txt nella stessa directory con:
 # streamlit
@@ -63,7 +63,8 @@ MOVEMENT_INTENSITY: Dict[str, float] = {
     "Hard": 1.2
 }
 
-# TEMI COLORE ARTISTICI
+# TEMI COLORE ARTISTICI - MANTENUTI PER GLI ALTRI STILI, MA USEREMO SCELTA PERSONALIZZATA PER PARTICELLE
+# Questi temi non saranno più selezionabili direttamente, ma i loro colori predefiniti possono essere usati come esempio per i color picker.
 ARTISTIC_COLOR_THEMES: Dict[str, Dict[str, Any]] = {
     "Neon Cyber": {
         "colors": ["#FF0080", "#00FF80", "#8000FF", "#FF8000"],
@@ -238,7 +239,7 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
 
 def create_particle_system(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
                          theme: Dict[str, Any], intensity: float, fps: int) -> Image.Image:
-    """Crea sistema particellare che danza con la musica."""
+    """Crea sistema particellare che danza con la musica (Modificato per maggiore intensità)."""
     width, height = resolution
     img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
     draw = ImageDraw.Draw(img)
@@ -257,52 +258,65 @@ def create_particle_system(features: Dict[str, Any], frame_idx: int, resolution:
         mid_energy = np.mean(features['freq_high_mid'][:, time_idx]) if time_idx < features['freq_high_mid'].shape[1] else 0
         high_energy = np.mean(features['freq_brilliance'][:, time_idx]) if time_idx < features['freq_brilliance'].shape[1] else 0
 
-        # Numero particelle basato su energia
-        num_particles = int(50 + current_energy * 200 * intensity)
+        # NUOVE IMPOSTAZIONI PER PARTICELLE PIÙ INTENSE E PIENE
+        # Numero particelle aumentato e più reattivo
+        num_particles = int(200 + current_energy * 500 * intensity) # Aumentato base e reattività
 
         # Genera particelle
         for i in range(num_particles):
             # Posizione influenzata da frequenze diverse
-            angle = (i / num_particles) * 2 * np.pi + frame_idx * 0.05 * intensity
+            angle = (i / num_particles) * 2 * np.pi + frame_idx * 0.08 * intensity # Velocità di rotazione aumentata
 
             # Raggio basato su energia e frequenze
-            base_radius = min(width, height) * 0.1
-            radius_variation = (bass_energy * 0.4 + mid_energy * 0.3 + high_energy * 0.3) * min(width, height) * 0.3
-            radius = base_radius + radius_variation * np.sin(angle * 3 + frame_idx * 0.1)
+            base_radius = min(width, height) * 0.15 # Raggio base leggermente più grande
+            radius_variation = (bass_energy * 0.5 + mid_energy * 0.3 + high_energy * 0.2) * min(width, height) * 0.4 # Più variazione
+            radius = base_radius + radius_variation * (1 + np.sin(angle * 5 + frame_idx * 0.15)) # Oscillazione più complessa e veloce
 
             center_x, center_y = width // 2, height // 2
-            x = int(center_x + radius * np.cos(angle) * intensity)
-            y = int(center_y + radius * np.sin(angle) * intensity)
+            x = int(center_x + radius * np.cos(angle) * (1 + current_energy * 0.2)) # Posizione più reattiva
+            y = int(center_y + radius * np.sin(angle) * (1 + current_energy * 0.2))
 
-            # Dimensione particella
-            particle_size = int(2 + onset_strength * 15 + current_energy * 10)
+            # Dimensione particella più grande e reattiva
+            particle_size = int(4 + onset_strength * 25 + current_energy * 15 * intensity) # Dimensione base aumentata e reattività
+            particle_size = max(1, particle_size) # Assicura dimensione minima
 
-            # Colore basato su frequenza dominante
-            if bass_energy > mid_energy and bass_energy > high_energy:
-                color = theme['colors'][0]  # Bassi
-            elif mid_energy > high_energy:
-                color = theme['colors'][1]  # Medi
+            # Colore basato su frequenza dominante o ciclico se ci sono più colori
+            colors = theme['colors']
+            if len(colors) == 1:
+                color = colors[0]
             else:
-                color = theme['colors'][2]  # Acuti
-
+                if bass_energy > mid_energy and bass_energy > high_energy:
+                    color = colors[0]  # Bassi
+                elif mid_energy > high_energy:
+                    color = colors[1 % len(colors)]  # Medi
+                else:
+                    color = colors[2 % len(colors)]  # Acuti
+            
             # Trasparenza basata su energia
-            alpha = int(100 + current_energy * 155)
+            alpha = int(150 + current_energy * 105) # Trasparenza base più alta
 
-            # Disegna particella con glow
-            if theme['style'] == 'neon':
-                # Effetto glow per neon
-                for glow_radius in range(particle_size + 4, particle_size - 1, -1):
-                    glow_alpha = max(10, alpha // (glow_radius - particle_size + 2))
-                    glow_color = (*hex_to_rgb(color), glow_alpha)
-                    draw.ellipse([x - glow_radius, y - glow_radius,
-                                x + glow_radius, y + glow_radius], fill=glow_color)
-            else:
-                # Particella normale
-                draw.ellipse([x - particle_size, y - particle_size,
-                            x + particle_size, y + particle_size],
-                           fill=(*hex_to_rgb(color), alpha))
+            # Disegna particella con glow potenziato
+            # Effetto glow potenziato per tutti gli stili, non solo 'neon'
+            for glow_radius in range(particle_size + 6, particle_size - 1, -1): # Range glow più ampio
+                glow_alpha = max(10, alpha // (glow_radius - particle_size + 2)) # Decay più lento del glow
+                if glow_radius > particle_size: # Per il glow esterno
+                    # Colore del glow più chiaro o del colore base
+                    r, g, b = hex_to_rgb(color)
+                    # Satura e rende più brillante per un effetto glow intenso
+                    h, s, v = colorsys.rgb_to_hsv(r / 255., g / 255., b / 255.)
+                    v_glow = min(1.0, v * 1.5) # Aumenta la luminosità
+                    s_glow = min(1.0, s * 0.8) # Mantiene saturazione, ma può essere ridotta per un glow più diffuso
+                    r_glow, g_glow, b_glow = colorsys.hsv_to_rgb(h, s_glow, v_glow)
+                    glow_color_rgb = (int(r_glow * 255), int(g_glow * 255), int(b_glow * 255))
+                    final_glow_color = (*glow_color_rgb, glow_alpha)
+                else: # Per la particella centrale
+                    final_glow_color = (*hex_to_rgb(color), alpha) # Particella interna opaca
+
+                draw.ellipse([x - glow_radius, y - glow_radius,
+                            x + glow_radius, y + glow_radius], fill=final_glow_color)
 
     return img.convert('RGB')
+
 
 def create_circular_spectrum(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
                            theme: Dict[str, Any], intensity: float, fps: int) -> Image.Image:
@@ -342,10 +356,15 @@ def create_circular_spectrum(features: Dict[str, Any], frame_idx: int, resolutio
                 x2 = int(center_x + outer_radius * np.cos(angle))
                 y2 = int(center_y + outer_radius * np.sin(angle))
 
-                # Colore basato su frequenza
-                color_idx = int((i / n_bins) * len(theme['colors']))
-                color_idx = min(color_idx, len(theme['colors']) - 1)
-                color = theme['colors'][color_idx]
+                # Colore basato su frequenza usando i colori personalizzati
+                colors = theme['colors']
+                if len(colors) == 1:
+                    color = colors[0]
+                else:
+                    # Distribuisci i colori sui bin dello spettro
+                    color_idx = int((i / n_bins) * len(colors))
+                    color = colors[color_idx % len(colors)]
+
 
                 # Spessore linea basato su magnitudine
                 line_width = max(1, int(magnitude * 5 + 1))
@@ -380,7 +399,7 @@ def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tu
                 layer_offset_y = layer * 20
                 layer_alpha = 255 - layer * 30
 
-                # Colore layer
+                # Colore layer usando i colori personalizzati
                 base_color = theme['colors'][layer % len(theme['colors'])]
 
                 points = []
@@ -449,7 +468,7 @@ def create_fluid_dynamics(features: Dict[str, Any], frame_idx: int, resolution: 
                 y = max(0, min(height - 1, y))
                 points.append((x, y))
 
-            # Colore onda
+            # Colore onda usando i colori personalizzati
             color_idx = wave_idx % len(theme['colors'])
             color = theme['colors'][color_idx]
 
@@ -515,7 +534,7 @@ def create_geometric_patterns(features: Dict[str, Any], frame_idx: int, resoluti
                 y = int(center_y + radius * np.sin(angle))
                 points.append((x, y))
 
-            # Colore
+            # Colore usando i colori personalizzati
             color = theme['colors'][ring % len(theme['colors'])]
 
             # Disegna poligono
@@ -571,7 +590,7 @@ def create_neural_network(features: Dict[str, Any], frame_idx: int, resolution: 
                         # Spessore linea
                         line_width = max(1, int(connection_strength * 3))
 
-                        # Colore connessione
+                        # Colore connessione usando i colori personalizzati
                         color_idx = int(connection_strength * len(theme['colors']))
                         color_idx = min(color_idx, len(theme['colors']) - 1)
                         color = theme['colors'][color_idx]
@@ -629,7 +648,7 @@ def create_galaxy_spiral(features: Dict[str, Any], frame_idx: int, resolution: T
 
                 points.append((x, y))
 
-            # Colore braccio spirale
+            # Colore braccio spirale usando i colori personalizzati
             color = theme['colors'][arm % len(theme['colors'])]
 
             # Disegna spirale come linea continua
@@ -700,7 +719,7 @@ def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution:
                 next_x = int(target_x + offset_x)
                 next_y = int(target_y + offset_y)
 
-                # Colore fulmine
+                # Colore fulmine usando i colori personalizzati
                 color = theme['colors'][lightning % len(theme['colors'])]
 
                 # Spessore basato su intensità
@@ -709,20 +728,35 @@ def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution:
                 # Disegna segmento
                 draw.line([current_x, current_y, next_x, next_y], fill=color, width=line_width)
 
-                # Effetto glow
-                if theme['style'] == 'neon':
-                    for glow in range(1, 4):
-                        glow_width = line_width + glow
-                        r, g, b = hex_to_rgb(color)
-                        glow_alpha = max(50, 200 // glow)
-                        # Simula glow con colori più chiari
-                        glow_r = min(255, r + glow * 20)
-                        glow_g = min(255, g + glow * 20)
-                        glow_b = min(255, b + glow * 20)
-                        glow_color = f"#{glow_r:02x}{glow_g:02x}{glow_b:02x}"
-                        draw.line([current_x, current_y, next_x, next_y], fill=glow_color, width=glow_width)
+                # Effetto glow - applicato sempre, indipendentemente dallo stile, per consistenza
+                for glow in range(1, 4):
+                    glow_width = line_width + glow
+                    r, g, b = hex_to_rgb(color)
+                    glow_alpha = max(50, 200 // glow)
+                    
+                    # Rende il colore del glow più chiaro e diffuso
+                    h, s, v = colorsys.rgb_to_hsv(r / 255., g / 255., b / 255.)
+                    v_glow = min(1.0, v * 1.5) # Aumenta la luminosità
+                    s_glow = min(1.0, s * 0.5) # Rende meno saturo per un glow più "morbido"
+                    r_glow, g_glow, b_glow = colorsys.hsv_to_rgb(h, s_glow, v_glow)
+                    glow_color_rgb = (int(r_glow * 255), int(g_glow * 255), int(b_glow * 255))
+                    
+                    glow_color = (*glow_color_rgb, glow_alpha) # Costruisce il colore RGBA per il glow
+                    
+                    # Per PIL che non supporta RGBA per draw.line, creiamo un colore esadecimale simulando la trasparenza
+                    # Questo è un workaround. Per un vero glow più complesso, sarebbe meglio usare Image.alpha_composite
+                    # o disegnare su un layer separato e poi fonderlo con un blur.
+                    # Per semplicità, faremo un colore più scuro per simulare trasparenza.
+                    
+                    dark_factor = glow_alpha / 255.0
+                    simulated_r = int(r_glow * dark_factor)
+                    simulated_g = int(g_glow * dark_factor)
+                    simulated_b = int(b_glow * dark_factor)
+                    simulated_glow_hex = f"#{simulated_r:02x}{simulated_g:02x}{simulated_b:02x}"
+                    
+                    draw.line([current_x, current_y, next_x, next_y], fill=simulated_glow_hex, width=glow_width)
 
-                current_x, current_y = next_x, next_y
+            current_x, current_y = next_x, next_y
 
     return img
 
@@ -837,11 +871,21 @@ def main():
             format_func=lambda x: ARTISTIC_STYLES[x]
         )
 
-        # Tema colori
-        selected_theme = st.selectbox(
-            "Tema Colori",
-            list(ARTISTIC_COLOR_THEMES.keys())
-        )
+        # Selettori di colore personalizzati (sempre visibili)
+        st.subheader("Colori Personalizzati")
+        bg_color = st.color_picker("Colore Sfondo", value="#000015")
+        color1 = st.color_picker("Colore Primario", value="#FF0080")
+        color2 = st.color_picker("Colore Secondario", value="#00FF80")
+        color3 = st.color_picker("Colore Terziario", value="#8000FF")
+        
+        # Creazione del dizionario del tema con i colori personalizzati
+        selected_theme = {
+            "colors": [color1, color2, color3],
+            "background": bg_color,
+            "style": "custom" # Indicatore che i colori sono personalizzati
+        }
+        selected_theme_name = "Personalizzato" # Per visualizzazione nell'anteprima
+
 
         # Intensità movimento
         movement_intensity = st.selectbox(
@@ -914,7 +958,7 @@ def main():
             with col1:
                 st.info(f"""
                 **Stile:** {ARTISTIC_STYLES[selected_style]}
-                **Tema:** {selected_theme}
+                **Tema:** {selected_theme_name}
                 **Intensità:** {movement_intensity}
                 """)
 
@@ -927,8 +971,8 @@ def main():
 
             # Bottone genera
             if st.button("🚀 Genera Visualizzazione Artistica", type="primary"):
-                theme = ARTISTIC_COLOR_THEMES[selected_theme]
-                intensity = MOVEMENT_INTENSITY[movement_intensity]
+                # theme e intensity sono già impostati in base ai selettori
+                intensity_value = MOVEMENT_INTENSITY[movement_intensity]
                 resolution = FORMAT_RESOLUTIONS[format_ratio]
                 
                 # Crea directory temporanea per i frame
@@ -936,7 +980,7 @@ def main():
                     # Genera visualizzazione
                     with st.spinner("🎨 Creando arte visiva..."):
                         frame_count = generate_artistic_visualization(
-                            features, selected_style, resolution, theme, fps, intensity, frame_dir
+                            features, selected_style, resolution, selected_theme, fps, intensity_value, frame_dir
                         )
                     
                     if frame_count > 0:
