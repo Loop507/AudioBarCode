@@ -44,7 +44,7 @@ FORMAT_RESOLUTIONS: Dict[str, Tuple[int, int]] = {
     "4:3": (800, 600)
 }
 
-# NUOVI STILI ARTISTICI
+# NUOVI STILI ARTISTICI - AGGIUNTA "Barcode Visualizer"
 ARTISTIC_STYLES: Dict[str, str] = {
     "Particle System": "🌟 Particelle che danzano con la musica",
     "Circular Spectrum": "⭕ Spettro radiale rotante",
@@ -53,7 +53,8 @@ ARTISTIC_STYLES: Dict[str, str] = {
     "Geometric Patterns": "🔷 Forme geometriche animate",
     "Neural Network": "🧠 Rete neurale pulsante",
     "Galaxy Spiral": "🌌 Spirale galattica in movimento",
-    "Lightning Storm": "⚡ Tempesta elettrica musicale"
+    "Lightning Storm": "⚡ Tempesta elettrica musicale",
+    "Barcode Visualizer": "📶 Barre che reagiscono alla musica" # Nuovo stile
 }
 
 # INTENSITÀ MOVIMENTO - AGGIORNATA
@@ -259,7 +260,8 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
             'hop_length': hop_length,
             'sr': sr,
             'duration': duration,
-            'magnitude_raw': magnitude
+            'magnitude_raw': magnitude,
+            'n_fft': n_fft # Aggiungi n_fft per riferimento a freq_bins
         }
     except Exception as e:
         st.error(f"Errore feature avanzate: {e}")
@@ -849,6 +851,76 @@ def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution:
 
     return img
 
+def create_barcode_visualizer(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
+                              theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
+    """Crea una visualizzazione stile codice a barre che reagisce alla musica."""
+    width, height = resolution
+    img = Image.new('RGB', (width, height), theme['background'])
+    draw = ImageDraw.Draw(img)
+
+    time_idx = get_time_idx(features, frame_idx, fps)
+
+    if time_idx >= 0:
+        current_energy = features['rms_energy'][time_idx]
+        effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
+        onset_strength = features['onset_strength'][time_idx]
+
+        # Normalizzazione dello spettro per ottenere valori da 0 a 1 per ogni bin
+        # Assicurati che stft_magnitude sia 2D (frequenze x tempo)
+        stft_slice = features['stft_magnitude'][:, time_idx]
+        if np.max(stft_slice) > 0:
+            stft_slice_norm = stft_slice / np.max(stft_slice)
+        else:
+            stft_slice_norm = np.zeros_like(stft_slice)
+
+        num_bars = 120 # Numero fisso di barre, per dare un aspetto più barcode
+        bar_spacing = 2 # Spazio tra le barre
+        bar_total_width = width / num_bars
+
+        for i in range(num_bars):
+            x = int(i * bar_total_width)
+            bar_width = max(1, int(bar_total_width - bar_spacing))
+
+            # Associa un bin di frequenza alla barra
+            freq_bin_idx = int((i / num_bars) * len(stft_slice_norm))
+            freq_magnitude = stft_slice_norm[freq_bin_idx] if freq_bin_idx < len(stft_slice_norm) else 0
+
+            # L'altezza della barra è influenzata da volume, frequenza e intensità
+            max_bar_height = height * 0.8 * intensity
+            bar_height = int(max_bar_height * effective_energy * freq_magnitude)
+            
+            # Introduciamo la variazione per l'effetto "rotto" come nella seconda immagine
+            # Più forte l'onset, più frammentata può essere la barra
+            num_segments = max(1, int(2 + onset_strength * 8)) # Più segmenti per onset forte
+            segment_height = max(1, bar_height // num_segments)
+            
+            # Colore della barra basato sulla posizione o sulla frequenza
+            colors = theme['colors']
+            color_idx = int((freq_bin_idx / len(stft_slice_norm)) * len(colors))
+            color_idx = min(color_idx, len(colors) - 1)
+            bar_color = colors[color_idx]
+
+            current_y = (height - bar_height) // 2 # Centra verticalmente la barra potenziale
+            
+            for seg in range(num_segments):
+                # Altezza del segmento individuale, con un po' di casualità e reattività
+                seg_h = max(1, int(segment_height * (0.8 + 0.4 * random.random())))
+                
+                # Posizione Y del segmento, con spostamento casuale per l'effetto "rotto"
+                # Il random offset è maggiore per onset forti
+                y_offset = int(random.uniform(-onset_strength * height * 0.05 * intensity, 
+                                                onset_strength * height * 0.05 * intensity))
+                seg_y_start = current_y + seg * segment_height + y_offset
+
+                # Assicurati che i segmenti rimangano all'interno dell'immagine
+                seg_y_start = max(0, min(height - seg_h, seg_y_start))
+                
+                # Disegna solo se l'altezza è significativa
+                if seg_h > 0 and bar_width > 0:
+                    draw.rectangle([x, seg_y_start, x + bar_width, seg_y_start + seg_h], fill=bar_color)
+    return img
+
+
 def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
     """Converte colore hex in RGB."""
     hex_color = hex_color.lstrip('#')
@@ -870,7 +942,8 @@ def generate_artistic_visualization(features: Dict[str, Any], style: str, resolu
         "Geometric Patterns": create_geometric_patterns,
         "Neural Network": create_neural_network,
         "Galaxy Spiral": create_galaxy_spiral,
-        "Lightning Storm": create_lightning_storm
+        "Lightning Storm": create_lightning_storm,
+        "Barcode Visualizer": create_barcode_visualizer # Aggiunto il nuovo stile
     }
 
     style_func = style_functions.get(style, create_particle_system)
@@ -972,7 +1045,7 @@ def main():
         color_high_freq = st.color_picker("Colore Alte Frequenze", value="#8000FF")
         
         # Creazione del dizionario del tema con i colori personalizzati
-        selected_theme = {
+        selected_theme_data = { # Rinominato per evitare conflitto con selected_theme (stringa)
             "colors": [color_low_freq, color_mid_freq, color_high_freq],
             "background": bg_color,
             "style": "custom" # Indicatore che i colori sono personalizzati
@@ -1120,7 +1193,7 @@ def main():
                     # Genera visualizzazione
                     with st.spinner("🎨 Creando arte visiva..."):
                         frame_count = generate_artistic_visualization(
-                            features, selected_style, resolution, selected_theme, fps, intensity_value, global_volume_offset, frame_dir
+                            features, selected_style, resolution, selected_theme_data, fps, intensity_value, global_volume_offset, frame_dir
                         )
                     
                     if frame_count > 0:
