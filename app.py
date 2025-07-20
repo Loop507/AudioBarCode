@@ -147,7 +147,7 @@ def cleanup_files(*files: str) -> None:
 
 def generate_visualization_frame_pil(features: Dict[str, Any], frame_idx: int, mode: str, 
                                    colors: Dict[str, str], resolution: Tuple[int, int], fps: int) -> Image.Image:
-    """Generate a visualization frame using PIL with STFT data."""
+    """Generate a visualization frame using PIL that matches the preview exactly."""
     width, height = resolution
     img = Image.new('RGB', (width, height), 'black')
     draw = ImageDraw.Draw(img)
@@ -157,84 +157,130 @@ def generate_visualization_frame_pil(features: Dict[str, Any], frame_idx: int, m
     time_idx = min(time_idx, features['stft_magnitude'].shape[1] - 1)
     
     if mode == "Classic Waveform":
-        # Visualizzazione waveform usando STFT
-        spectrum_slice = features['stft_magnitude'][:, time_idx]
-        n_bars = min(width // 3, len(spectrum_slice))
-        bar_width = width // n_bars
+        # REPLICA ESATTA della preview: waveform fill come in matplotlib
+        stft_spec = features['stft_magnitude']
+        waveform_slice = np.mean(stft_spec, axis=0)  # Media su tutte le frequenze
         
-        for i in range(n_bars):
-            freq_idx = int(i * len(spectrum_slice) / n_bars)
-            intensity = spectrum_slice[freq_idx]
-            bar_height = int(intensity * height * 0.8)
-            bar_x = i * bar_width
-            
-            # Colore basato sulla frequenza
-            if i < n_bars // 3:
-                color = colors['low']
-            elif i < 2 * n_bars // 3:
-                color = colors['mid']
-            else:
-                color = colors['high']
-            
-            if bar_height > 0:
-                draw.rectangle([bar_x, height - bar_height, bar_x + bar_width - 1, height], 
-                             fill=color, outline=color)
+        # Prendi una finestra intorno al tempo corrente per effetto fluido
+        window_size = min(50, stft_spec.shape[1] // 10)
+        start_idx = max(0, time_idx - window_size)
+        end_idx = min(stft_spec.shape[1], time_idx + window_size)
+        
+        time_points = np.linspace(0, width, end_idx - start_idx)
+        waveform_window = waveform_slice[start_idx:end_idx]
+        
+        # Disegna la forma d'onda riempita come nell'anteprima
+        points = []
+        for i, (x, intensity) in enumerate(zip(time_points, waveform_window)):
+            y = height - int(intensity * height * 0.8)
+            points.append((int(x), y))
+        
+        # Aggiungi punti base per chiudere la forma
+        if points:
+            points.append((width, height))
+            points.append((0, height))
+            draw.polygon(points, fill=colors['mid'], outline=colors['mid'])
     
     elif mode == "Dense Matrix":
-        # Matrice densa usando spettro STFT
-        cell_size = 6
-        rows = height // cell_size
-        cols = width // cell_size
+        # REPLICA dello spettrogramma come heatmap
+        stft_data = features['stft_magnitude']
         
-        spectrum = features['stft_magnitude'][:, time_idx]
+        # Prendi una sezione temporale più ampia per effetti dinamici
+        window_size = min(20, stft_data.shape[1] // 20)
+        start_idx = max(0, time_idx - window_size // 2)
+        end_idx = min(stft_data.shape[1], start_idx + window_size)
         
-        for row in range(rows):
-            for col in range(cols):
-                # Mappa la posizione alla frequenza
-                freq_idx = min(int((row / rows) * len(spectrum)), len(spectrum) - 1)
-                intensity = spectrum[freq_idx]
-                
-                # Effetto temporale
-                time_offset = col / cols
-                intensity_adjusted = intensity * (0.7 + 0.3 * np.sin(time_offset * np.pi))
-                
-                # Colore basato sull'intensità
-                color_val = int(intensity_adjusted * 255)
-                color = f"#{color_val:02x}{max(0, color_val-50):02x}{max(0, color_val-100):02x}"
-                
-                x1, y1 = col * cell_size, row * cell_size
-                x2, y2 = x1 + cell_size - 1, y1 + cell_size - 1
-                draw.rectangle([x1, y1, x2, y2], fill=color, outline=color)
+        # Ridimensiona per adattarsi alla risoluzione
+        freq_bins = stft_data.shape[0]
+        time_bins = end_idx - start_idx
+        
+        cell_width = width // time_bins
+        cell_height = height // freq_bins
+        
+        for freq_idx in range(freq_bins):
+            for time_offset in range(time_bins):
+                actual_time_idx = start_idx + time_offset
+                if actual_time_idx < stft_data.shape[1]:
+                    intensity = stft_data[freq_bins - 1 - freq_idx, actual_time_idx]  # Inverti per origin='lower'
+                    
+                    # Colore tipo 'hot' colormap
+                    color_val = int(intensity * 255)
+                    red = min(255, int(color_val * 2))
+                    green = min(255, max(0, int((color_val - 128) * 2)))
+                    blue = min(255, max(0, int((color_val - 192) * 4)))
+                    
+                    color = f"#{red:02x}{green:02x}{blue:02x}"
+                    
+                    x1 = time_offset * cell_width
+                    y1 = freq_idx * cell_height
+                    x2 = x1 + cell_width
+                    y2 = y1 + cell_height
+                    
+                    if intensity > 0.1:  # Soglia per evitare rumore
+                        draw.rectangle([x1, y1, x2, y2], fill=color, outline=color)
     
     elif mode == "Frequency Spectrum":
-        # Visualizzazione con cerchi basata su bande di frequenza STFT
-        low_energy = np.mean(features['freq_low'][:, time_idx])
-        mid_energy = np.mean(features['freq_mid'][:, time_idx])
-        high_energy = np.mean(features['freq_high'][:, time_idx])
+        # REPLICA delle linee di frequenza come nell'anteprima
+        time_frames = np.arange(features['freq_low'].shape[1])
+        current_window = 100  # Finestra di visualizzazione
         
-        center_x, center_y = width // 2, height // 2
-        max_radius = min(width, height) // 2 - 20
+        start_frame = max(0, time_idx - current_window)
+        end_frame = min(features['freq_low'].shape[1], time_idx + 1)
         
-        # Cerchi concentrici con dimensioni basate sull'energia
-        low_radius = int(low_energy * max_radius * 0.8)
-        mid_radius = int(mid_energy * max_radius * 0.5)
-        high_radius = int(high_energy * max_radius * 0.2)
-        
-        # Disegna dal più grande al più piccolo
-        if low_radius > 5:
-            draw.ellipse([center_x - low_radius, center_y - low_radius,
-                         center_x + low_radius, center_y + low_radius], 
-                        fill=colors['low'], outline=colors['low'])
-        
-        if mid_radius > 3:
-            draw.ellipse([center_x - mid_radius, center_y - mid_radius,
-                         center_x + mid_radius, center_y + mid_radius], 
-                        fill=colors['mid'], outline=colors['mid'])
-        
-        if high_radius > 1:
-            draw.ellipse([center_x - high_radius, center_y - high_radius,
-                         center_x + high_radius, center_y + high_radius], 
-                        fill=colors['high'], outline=colors['high'])
+        if end_frame > start_frame:
+            # Calcola le energie medie per le tre bande
+            low_data = np.mean(features['freq_low'][:, start_frame:end_frame], axis=0)
+            mid_data = np.mean(features['freq_mid'][:, start_frame:end_frame], axis=0)
+            high_data = np.mean(features['freq_high'][:, start_frame:end_frame], axis=0)
+            
+            # Crea coordinate per le linee
+            x_coords = np.linspace(0, width, len(low_data))
+            
+            # Funzione per disegnare linee spesse
+            def draw_thick_line(points_data, color, thickness=3):
+                if len(points_data) > 1:
+                    points = [(int(x), int(height - y * height * 0.8)) for x, y in points_data]
+                    
+                    # Disegna linea spessa
+                    for i in range(len(points) - 1):
+                        x1, y1 = points[i]
+                        x2, y2 = points[i + 1]
+                        
+                        for offset in range(-thickness, thickness + 1):
+                            draw.line([x1, y1 + offset, x2, y2 + offset], fill=color, width=1)
+            
+            # Disegna le tre linee di frequenza
+            low_points = list(zip(x_coords, low_data))
+            mid_points = list(zip(x_coords, mid_data))
+            high_points = list(zip(x_coords, high_data))
+            
+            draw_thick_line(low_points, colors['low'], thickness=4)
+            draw_thick_line(mid_points, colors['mid'], thickness=4)
+            draw_thick_line(high_points, colors['high'], thickness=4)
+            
+            # Aggiungi cerchi per l'energia attuale come effetto extra
+            current_low = low_data[-1] if len(low_data) > 0 else 0
+            current_mid = mid_data[-1] if len(mid_data) > 0 else 0
+            current_high = high_data[-1] if len(high_data) > 0 else 0
+            
+            center_x, center_y = int(width * 0.85), height // 2
+            max_radius = min(width, height) // 8
+            
+            # Piccoli cerchi indicatori dell'energia corrente
+            if current_low > 0.1:
+                r = int(current_low * max_radius)
+                draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], 
+                           fill=colors['low'], outline=colors['low'])
+            
+            if current_mid > 0.1:
+                r = int(current_mid * max_radius * 0.7)
+                draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], 
+                           fill=colors['mid'], outline=colors['mid'])
+            
+            if current_high > 0.1:
+                r = int(current_high * max_radius * 0.4)
+                draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], 
+                           fill=colors['high'], outline=colors['high'])
     
     return img
 
