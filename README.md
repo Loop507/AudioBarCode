@@ -76,11 +76,7 @@ Questo software è distribuito gratuitamente sotto i termini della **MIT License
 
 **Se utilizzi o ridistribuisci questo software, ti preghiamo di citare l'autore originale: `Loop507`.**
 
-Un esempio di citazione potrebbe essere: "Visualizzazione generata con SoundWave Visualizer - Artistic Edition by Loop507."
 
-Per i dettagli completi sulla licenza, vedi il file `LICENSE` (se lo crei).
 
-## 🤝 Contributi
 
-Se hai idee per nuove funzionalità, miglioramenti o hai trovato dei bug, sentiti libero di aprire una "Issue" o proporre una "Pull Request" sul repository GitHub.
 
