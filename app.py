@@ -18,7 +18,7 @@ import sys
 # import importlib # Non più necessario se non gestisci import dinamici dopo la rimozione
 
 # ==========================================
-# GESTIONE DELLE DIPENDENZE - ORA GESTITA TRAMite requirements.txt
+# GESTIONE DELLE DIPENDENZE - ORA GESTITA TRAMITE requirements.txt
 # La sezione `install_and_import` è stata rimossa.
 # Assicurati di avere un file requirements.txt nella stessa directory con:
 # streamlit
@@ -151,10 +151,13 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
 
         # Analisi dettagliata delle frequenze (più bande)
         n_freqs = stft_norm.shape[0]
+        # Frequenze basse (circa 20-250 Hz)
         freq_sub_bass = stft_norm[:n_freqs//8, :]
         freq_bass = stft_norm[n_freqs//8:n_freqs//4, :]
+        # Frequenze medie (circa 250 Hz - 4 kHz)
         freq_low_mid = stft_norm[n_freqs//4:n_freqs//2, :]
         freq_high_mid = stft_norm[n_freqs//2:3*n_freqs//4, :]
+        # Frequenze alte (circa 4 kHz - 20 kHz)
         freq_presence = stft_norm[3*n_freqs//4:7*n_freqs//8, :]
         freq_brilliance = stft_norm[7*n_freqs//8:, :]
 
@@ -285,6 +288,8 @@ def create_particle_system(features: Dict[str, Any], frame_idx: int, resolution:
             if len(colors) == 1:
                 color = colors[0]
             else:
+                # Per particelle, possiamo assegnare i colori in base alla dominanza delle frequenze nel momento attuale
+                # O semplicemente ciclarli per varietà se i colori sono usati per elementi diversi
                 if bass_energy > mid_energy and bass_energy > high_energy:
                     color = colors[0]  # Bassi
                 elif mid_energy > high_energy:
@@ -296,13 +301,10 @@ def create_particle_system(features: Dict[str, Any], frame_idx: int, resolution:
             alpha = int(150 + current_energy * 105) # Trasparenza base più alta
 
             # Disegna particella con glow potenziato
-            # Effetto glow potenziato per tutti gli stili, non solo 'neon'
             for glow_radius in range(particle_size + 6, particle_size - 1, -1): # Range glow più ampio
                 glow_alpha = max(10, alpha // (glow_radius - particle_size + 2)) # Decay più lento del glow
                 if glow_radius > particle_size: # Per il glow esterno
-                    # Colore del glow più chiaro o del colore base
                     r, g, b = hex_to_rgb(color)
-                    # Satura e rende più brillante per un effetto glow intenso
                     h, s, v = colorsys.rgb_to_hsv(r / 255., g / 255., b / 255.)
                     v_glow = min(1.0, v * 1.5) # Aumenta la luminosità
                     s_glow = min(1.0, s * 0.8) # Mantiene saturazione, ma può essere ridotta per un glow più diffuso
@@ -361,7 +363,7 @@ def create_circular_spectrum(features: Dict[str, Any], frame_idx: int, resolutio
                 if len(colors) == 1:
                     color = colors[0]
                 else:
-                    # Distribuisci i colori sui bin dello spettro
+                    # Distribuisci i colori sui bin dello spettro, ad es. i primi colori per le basse, gli ultimi per le alte
                     color_idx = int((i / n_bins) * len(colors))
                     color = colors[color_idx % len(colors)]
 
@@ -397,9 +399,8 @@ def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tu
             layers = 5
             for layer in range(layers):
                 layer_offset_y = layer * 20
-                layer_alpha = 255 - layer * 30
-
-                # Colore layer usando i colori personalizzati
+                
+                # Colore layer usando i colori personalizzati, ciclando tra di essi
                 base_color = theme['colors'][layer % len(theme['colors'])]
 
                 points = []
@@ -418,8 +419,13 @@ def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tu
                     # Crea poligono riempito per effetto volume
                     fill_points = points + [(width, height), (0, height)]
 
-                    # Colore con trasparenza
+                    # Colore con trasparenza simulata (PIL non gestisce RGBA per poligoni/linee direttamente)
+                    # useremo un colore più scuro per i layer più lontani
                     r, g, b = hex_to_rgb(base_color)
+                    dark_factor = 1.0 - (layer / (layers * 1.5)) # Più scuro se più lontano
+                    r = int(r * dark_factor)
+                    g = int(g * dark_factor)
+                    b = int(b * dark_factor)
                     layer_color = f"#{r:02x}{g:02x}{b:02x}"
 
                     # Disegna riempimento
@@ -427,7 +433,7 @@ def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tu
 
                     # Linea di contorno
                     for i in range(len(points) - 1):
-                        draw.line([points[i], points[i + 1]], fill=layer_color, width=2)
+                        draw.line([points[i], points[i + 1]], fill=base_color, width=2)
 
     return img
 
@@ -728,25 +734,16 @@ def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution:
                 # Disegna segmento
                 draw.line([current_x, current_y, next_x, next_y], fill=color, width=line_width)
 
-                # Effetto glow - applicato sempre, indipendentemente dallo stile, per consistenza
+                # Effetto glow
                 for glow in range(1, 4):
                     glow_width = line_width + glow
                     r, g, b = hex_to_rgb(color)
                     glow_alpha = max(50, 200 // glow)
                     
-                    # Rende il colore del glow più chiaro e diffuso
                     h, s, v = colorsys.rgb_to_hsv(r / 255., g / 255., b / 255.)
-                    v_glow = min(1.0, v * 1.5) # Aumenta la luminosità
-                    s_glow = min(1.0, s * 0.5) # Rende meno saturo per un glow più "morbido"
+                    v_glow = min(1.0, v * 1.5)
+                    s_glow = min(1.0, s * 0.5)
                     r_glow, g_glow, b_glow = colorsys.hsv_to_rgb(h, s_glow, v_glow)
-                    glow_color_rgb = (int(r_glow * 255), int(g_glow * 255), int(b_glow * 255))
-                    
-                    glow_color = (*glow_color_rgb, glow_alpha) # Costruisce il colore RGBA per il glow
-                    
-                    # Per PIL che non supporta RGBA per draw.line, creiamo un colore esadecimale simulando la trasparenza
-                    # Questo è un workaround. Per un vero glow più complesso, sarebbe meglio usare Image.alpha_composite
-                    # o disegnare su un layer separato e poi fonderlo con un blur.
-                    # Per semplicità, faremo un colore più scuro per simulare trasparenza.
                     
                     dark_factor = glow_alpha / 255.0
                     simulated_r = int(r_glow * dark_factor)
@@ -852,7 +849,8 @@ def main():
         layout="wide"
     )
 
-    st.title("🎵 SoundWave Visualizer - Artistic Edition")
+    # Titolo modificato con "by Loop507" più piccolo
+    st.markdown("<h1>🎵 SoundWave Visualizer - Artistic Edition <span style='font-size: 0.5em;'>by Loop507</span></h1>", unsafe_allow_html=True)
     st.markdown("*Trasforma la tua musica in arte visiva*")
 
     # Check FFmpeg
@@ -950,6 +948,24 @@ def main():
             if features is None:
                 st.error("Errore nell'analisi audio.")
                 st.stop()
+
+            # Aggiungi analisi frequenze
+            st.markdown("### 📊 Analisi Frequenze Medie")
+            # Calcola medie globali per le bande di frequenza
+            avg_bass = np.mean(features['freq_bass']) * 100 if features['freq_bass'].size > 0 else 0
+            # Ho scelto freq_high_mid come rappresentante per le medie, puoi combinare low_mid e high_mid se preferisci
+            avg_mid = np.mean(features['freq_high_mid']) * 100 if features['freq_high_mid'].size > 0 else 0
+            avg_high = np.mean(features['freq_brilliance']) * 100 if features['freq_brilliance'].size > 0 else 0
+
+            freq_col1, freq_col2, freq_col3 = st.columns(3)
+            with freq_col1:
+                st.metric("Basse", f"{avg_bass:.1f}%")
+            with freq_col2:
+                st.metric("Medie", f"{avg_mid:.1f}%")
+            with freq_col3:
+                st.metric("Alte", f"{avg_high:.1f}%")
+            st.info("Questi valori indicano la presenza media di ciascuna banda di frequenza nel brano (0-100%).")
+
 
             # Anteprima configurazione
             st.markdown("### 🎨 Anteprima Configurazione")
