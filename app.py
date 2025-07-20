@@ -739,7 +739,7 @@ def generate_artistic_visualization(features: Dict[str, Any], style: str, resolu
     
     style_func = style_functions.get(style, create_particle_system)
     
-    with st.progress(0) as progress_bar:
+    progress_bar = st.progress(0)
         for frame_idx in range(min(total_frames, MAX_DURATION * fps)):  # Limite sicurezza
             try:
                 frame = style_func(features, frame_idx, resolution, theme, intensity, fps)
