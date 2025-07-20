@@ -194,7 +194,8 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
 
         # Normalizzazione features
         centroid_norm = (spectral_centroid - spectral_centroid.min()) / (spectral_centroid.max() - spectral_centroid.min() + 1e-9)
-        rolloff_norm = (spectral_rolloff - spectral_rolloff.min()) / (spectral_rolloff.max() - rolloff_norm.min() + 1e-9)
+        # CORREZIONE QUI: Usare spectral_rolloff.min() e spectral_rolloff.max()
+        rolloff_norm = (spectral_rolloff - spectral_rolloff.min()) / (spectral_rolloff.max() - spectral_rolloff.min() + 1e-9)
         bandwidth_norm = (spectral_bandwidth - spectral_bandwidth.min()) / (spectral_bandwidth.max() - spectral_bandwidth.min() + 1e-9)
         zcr_norm = (zero_crossing_rate - zero_crossing_rate.min()) / (zero_crossing_rate.max() - zero_crossing_rate.min() + 1e-9)
 
@@ -451,7 +452,7 @@ def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tu
                 elif layer == 1:
                     base_color = theme['colors'][1 % len(theme['colors'])] # Medie
                 else: # layers 2+
-                    base_color = theme['colors'][2 % len(theme['colors'])] # Alte (o cicla)
+                    base_color = theme['colors'][2 % len(theme['colors'])] # Alte (or cycle)
 
 
                 points = []
