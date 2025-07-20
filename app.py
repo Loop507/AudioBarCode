@@ -98,6 +98,12 @@ ARTISTIC_COLOR_THEMES: Dict[str, Dict[str, Any]] = {
     }
 }
 
+# Costanti per la definizione delle bande di frequenza (Hz)
+# Questi sono range tipici per l'analisi musicale
+BASS_HZ_RANGE = (20, 500)
+MID_HZ_RANGE = (500, 4000)
+HIGH_HZ_RANGE = (4000, 11000) # Fino al limite di Nyquist per SR=22050
+
 def check_ffmpeg() -> bool:
     """Check if FFmpeg is installed."""
     try:
@@ -149,33 +155,31 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
         magnitude_db = librosa.amplitude_to_db(magnitude, ref=np.max)
         stft_norm = (magnitude_db - magnitude_db.min()) / (magnitude_db.max() - magnitude_db.min() + 1e-9)
 
-        # Analisi dettagliata delle frequenze (più bande)
-        n_freqs = stft_norm.shape[0] # n_fft // 2 + 1
-        
-        # Calcola le frequenze in Hz per ogni bin
+        # Analisi dettagliata delle frequenze (bande definite in Hz)
         freq_bins_hz = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
-        # Definizioni delle bande di frequenza basate su bin_indices
-        # Queste sono le definizioni interne e non rappresentano le classiche bande musicali
-        # ma sono quelle che il codice sta già usando.
-        
-        # Frequenze basse (bin da n_freqs//8 a n_freqs//4 - 1)
-        bass_start_bin = n_freqs // 8
-        bass_end_bin = n_freqs // 4 - 1
+        # Trova gli indici dei bin per le bande di frequenza definite in Hz
+        # BASS_HZ_RANGE
+        bass_start_bin = np.searchsorted(freq_bins_hz, BASS_HZ_RANGE[0])
+        bass_end_bin = np.searchsorted(freq_bins_hz, BASS_HZ_RANGE[1], side='right') - 1
+        # Assicurati che gli indici siano validi e in ordine
+        bass_start_bin = max(0, bass_start_bin)
+        bass_end_bin = min(len(freq_bins_hz) - 1, bass_end_bin)
         freq_bass = stft_norm[bass_start_bin : bass_end_bin + 1, :]
-        bass_hz_range = (freq_bins_hz[bass_start_bin], freq_bins_hz[bass_end_bin])
 
-        # Frequenze medie (bin da n_freqs//2 a 3*n_freqs//4 - 1)
-        mid_start_bin = n_freqs // 2
-        mid_end_bin = 3 * n_freqs // 4 - 1
+        # MID_HZ_RANGE
+        mid_start_bin = np.searchsorted(freq_bins_hz, MID_HZ_RANGE[0])
+        mid_end_bin = np.searchsorted(freq_bins_hz, MID_HZ_RANGE[1], side='right') - 1
+        mid_start_bin = max(0, mid_start_bin)
+        mid_end_bin = min(len(freq_bins_hz) - 1, mid_end_bin)
         freq_high_mid = stft_norm[mid_start_bin : mid_end_bin + 1, :]
-        mid_hz_range = (freq_bins_hz[mid_start_bin], freq_bins_hz[mid_end_bin])
 
-        # Frequenze alte (bin da 7*n_freqs//8 a n_freqs - 1)
-        high_start_bin = 7 * n_freqs // 8
-        high_end_bin = n_freqs - 1
+        # HIGH_HZ_RANGE
+        high_start_bin = np.searchsorted(freq_bins_hz, HIGH_HZ_RANGE[0])
+        high_end_bin = np.searchsorted(freq_bins_hz, HIGH_HZ_RANGE[1], side='right') - 1
+        high_start_bin = max(0, high_start_bin)
+        high_end_bin = min(len(freq_bins_hz) - 1, high_end_bin)
         freq_brilliance = stft_norm[high_start_bin : high_end_bin + 1, :]
-        high_hz_range = (freq_bins_hz[high_start_bin], freq_bins_hz[high_end_bin])
 
 
         # Chromagram per tonalità
@@ -229,10 +233,10 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
             'freq_high_mid': freq_high_mid,
             'freq_brilliance': freq_brilliance,
             
-            # Range Hz per le bande principali
-            'bass_hz_range': bass_hz_range,
-            'mid_hz_range': mid_hz_range,
-            'high_hz_range': high_hz_range,
+            # Range Hz per le bande principali (ora più precise)
+            'bass_hz_range': (freq_bins_hz[bass_start_bin], freq_bins_hz[bass_end_bin]),
+            'mid_hz_range': (freq_bins_hz[mid_start_bin], freq_bins_hz[mid_end_bin]),
+            'high_hz_range': (freq_bins_hz[high_start_bin], freq_bins_hz[high_end_bin]),
 
             # Features spettrali
             'spectral_centroid': centroid_norm,
@@ -259,6 +263,14 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
         st.error(f"Errore feature avanzate: {e}")
         return None
 
+def get_time_idx(features: Dict[str, Any], frame_idx: int, fps: int) -> int:
+    """Calcola l'indice temporale STFT/feature per un dato frame video."""
+    current_time = frame_idx / fps
+    time_idx = librosa.time_to_frames(current_time, sr=features['sr'], hop_length=features['hop_length'])
+    # Assicurati che l'indice non superi i limiti dell'array delle feature
+    return min(time_idx, features['rms_energy'].shape[0] - 1)
+
+
 def create_particle_system(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
                          theme: Dict[str, Any], intensity: float, fps: int) -> Image.Image:
     """Crea sistema particellare che danza con la musica (Modificato per maggiore intensità)."""
@@ -266,19 +278,17 @@ def create_particle_system(features: Dict[str, Any], frame_idx: int, resolution:
     img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
     draw = ImageDraw.Draw(img)
 
-    # Calcola indice temporale
-    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
-    time_idx = min(time_idx, features['rms_energy'].shape[0] - 1)
+    time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         # Energia attuale e vicine per movimento fluido
         current_energy = features['rms_energy'][time_idx]
-        onset_strength = features['onset_strength'][time_idx] if time_idx < len(features['onset_strength']) else 0
+        onset_strength = features['onset_strength'][time_idx] # onsets are also indexed by time_idx
 
         # Ottieni valori spettrali per colori
-        bass_energy = np.mean(features['freq_bass'][:, time_idx]) if time_idx < features['freq_bass'].shape[1] else 0
-        mid_energy = np.mean(features['freq_high_mid'][:, time_idx]) if time_idx < features['freq_high_mid'].shape[1] else 0
-        high_energy = np.mean(features['freq_brilliance'][:, time_idx]) if time_idx < features['freq_brilliance'].shape[1] else 0
+        bass_energy = np.mean(features['freq_bass'][:, time_idx])
+        mid_energy = np.mean(features['freq_high_mid'][:, time_idx])
+        high_energy = np.mean(features['freq_brilliance'][:, time_idx])
 
         # NUOVE IMPOSTAZIONI PER PARTICELLE PIÙ INTENSE E PIENE
         # Numero particelle aumentato e più reattivo
@@ -345,8 +355,7 @@ def create_circular_spectrum(features: Dict[str, Any], frame_idx: int, resolutio
     img = Image.new('RGB', (width, height), theme['background'])
     draw = ImageDraw.Draw(img)
 
-    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
-    time_idx = min(time_idx, features['stft_magnitude'].shape[1] - 1)
+    time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         center_x, center_y = width // 2, height // 2
@@ -406,8 +415,7 @@ def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tu
     img = Image.new('RGB', (width, height), theme['background'])
     draw = ImageDraw.Draw(img)
 
-    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
-    time_idx = min(time_idx, features['rms_energy'].shape[0] - 1)
+    time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         # Finestra temporale per waveform
@@ -477,8 +485,7 @@ def create_fluid_dynamics(features: Dict[str, Any], frame_idx: int, resolution: 
     img = Image.new('RGB', (width, height), theme['background'])
     draw = ImageDraw.Draw(img)
 
-    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
-    time_idx = min(time_idx, features['rms_energy'].shape[0] - 1)
+    time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         current_energy = features['rms_energy'][time_idx]
@@ -549,8 +556,7 @@ def create_geometric_patterns(features: Dict[str, Any], frame_idx: int, resoluti
     img = Image.new('RGB', (width, height), theme['background'])
     draw = ImageDraw.Draw(img)
 
-    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
-    time_idx = min(time_idx, features['rms_energy'].shape[0] - 1)
+    time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         current_energy = features['rms_energy'][time_idx]
@@ -606,8 +612,7 @@ def create_neural_network(features: Dict[str, Any], frame_idx: int, resolution: 
     img = Image.new('RGB', (width, height), theme['background'])
     draw = ImageDraw.Draw(img)
 
-    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
-    time_idx = min(time_idx, features['rms_energy'].shape[0] - 1)
+    time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         current_energy = features['rms_energy'][time_idx]
@@ -675,8 +680,7 @@ def create_galaxy_spiral(features: Dict[str, Any], frame_idx: int, resolution: T
     img = Image.new('RGB', (width, height), theme['background'])
     draw = ImageDraw.Draw(img)
 
-    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
-    time_idx = min(time_idx, features['rms_energy'].shape[0] - 1)
+    time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         current_energy = features['rms_energy'][time_idx]
@@ -747,12 +751,11 @@ def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution:
     img = Image.new('RGB', (width, height), theme['background'])
     draw = ImageDraw.Draw(img)
 
-    time_idx = int((frame_idx / fps) * features['sr'] / features['hop_length'])
-    time_idx = min(time_idx, features['rms_energy'].shape[0] - 1)
+    time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         current_energy = features['rms_energy'][time_idx]
-        onset_strength = features['onset_strength'][time_idx] if time_idx < len(features['onset_strength']) else 0
+        onset_strength = features['onset_strength'][time_idx]
 
         # Numero fulmini basato su energia
         num_lightning = int(1 + onset_strength * 8 + current_energy * 5)
@@ -1049,7 +1052,7 @@ def main():
                 )
             st.info("""
             Questi valori indicano la presenza media di ciascuna banda di frequenza nel brano (0-100%).
-            I range in Hz si riferiscono alle specifiche suddivisioni interne utilizzate per la visualizzazione.
+            I range in Hz si riferiscono alle specifiche suddivisioni interne utilizzate per la visualizzazione, ora più vicine a quelle musicali.
             """)
 
 
