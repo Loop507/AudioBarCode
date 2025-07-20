@@ -14,6 +14,31 @@ from typing import Tuple, Optional, Dict, Any
 import colorsys
 import math
 import random
+import sys
+import importlib
+
+# ==========================================
+# GESTIONE AUTOMATICA DELLE DIPENDENZE
+# ==========================================
+def install_and_import(package, min_version=None):
+    try:
+        if min_version:
+            module = importlib.import_module(package)
+            version = getattr(module, '__version__', '0.0.0')
+            if version < min_version:
+                raise ImportError
+        return True
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", f"{package}>={min_version}"])
+        return importlib.import_module(package)
+
+# Controllo e installazione dipendenze
+install_and_import("numpy", "1.26.0")
+install_and_import("librosa", "0.10.0")
+install_and_import("matplotlib", "3.7.0")
+install_and_import("Pillow", "10.0.0")
+install_and_import("scipy", "1.10.0")
+# ==========================================
 
 # Costanti - AGGIORNATE
 MAX_DURATION: float = 1800  # 30 minuti
