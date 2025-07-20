@@ -1,4 +1,4 @@
-# app.py - SoundWave Visualizer by Loop507 (Streamlit Cloud Compatible)
+# app.py - SoundWave Visualizer by Loop507 (Streamlit Cloud Compatible) - FIXED
 import streamlit as st
 import numpy as np
 import librosa
@@ -11,6 +11,7 @@ import matplotlib.patches as patches
 from PIL import Image, ImageDraw, ImageColor
 import io
 from typing import Tuple, Optional, Dict, Any
+import colorsys
 
 # Costanti - AGGIORNATE
 MAX_DURATION: float = 1800  # 30 minuti invece di 5 minuti
@@ -38,6 +39,7 @@ FREQUENCY_COLOR_PRESETS: Dict[str, Dict[str, str]] = {
     "Blue Ocean": {"high": "#00FFFF", "mid": "#0080FF", "low": "#0040FF"},
     "Sunset": {"high": "#FF6600", "mid": "#FF3300", "low": "#CC0000"},
     "Neon": {"high": "#FF00FF", "mid": "#00FFFF", "low": "#FFFF00"},
+    "Monochrome": {"high": "#FFFFFF", "mid": "#808080", "low": "#404040"},
     "Custom": {"high": "#FFFFFF", "mid": "#808080", "low": "#404040"}
 }
 
@@ -145,6 +147,11 @@ def cleanup_files(*files: str) -> None:
         except Exception:
             pass
 
+def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
+    """Convert hex color to RGB tuple."""
+    hex_color = hex_color.lstrip('#')
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
 def generate_visualization_frame_pil(features: Dict[str, Any], frame_idx: int, mode: str, 
                                    colors: Dict[str, str], resolution: Tuple[int, int], fps: int) -> Image.Image:
     """Generate a visualization frame using PIL that matches the preview exactly."""
@@ -157,130 +164,140 @@ def generate_visualization_frame_pil(features: Dict[str, Any], frame_idx: int, m
     time_idx = min(time_idx, features['stft_magnitude'].shape[1] - 1)
     
     if mode == "Classic Waveform":
-        # REPLICA ESATTA della preview: waveform fill come in matplotlib
+        # CORRETTO: Usa lo stesso calcolo dell'anteprima
         stft_spec = features['stft_magnitude']
-        waveform_slice = np.mean(stft_spec, axis=0)  # Media su tutte le frequenze
+        waveform_slice = np.mean(stft_spec, axis=0)
         
-        # Prendi una finestra intorno al tempo corrente per effetto fluido
-        window_size = min(50, stft_spec.shape[1] // 10)
+        # Prendi una finestra temporale per mostrare la progressione
+        window_size = min(width // 4, stft_spec.shape[1])
         start_idx = max(0, time_idx - window_size)
-        end_idx = min(stft_spec.shape[1], time_idx + window_size)
+        end_idx = min(stft_spec.shape[1], time_idx + 1)
         
-        time_points = np.linspace(0, width, end_idx - start_idx)
-        waveform_window = waveform_slice[start_idx:end_idx]
-        
-        # Disegna la forma d'onda riempita come nell'anteprima
-        points = []
-        for i, (x, intensity) in enumerate(zip(time_points, waveform_window)):
-            y = height - int(intensity * height * 0.8)
-            points.append((int(x), y))
-        
-        # Aggiungi punti base per chiudere la forma
-        if points:
-            points.append((width, height))
-            points.append((0, height))
-            draw.polygon(points, fill=colors['mid'], outline=colors['mid'])
+        if end_idx > start_idx:
+            waveform_section = waveform_slice[start_idx:end_idx]
+            x_coords = np.linspace(0, width, len(waveform_section))
+            
+            # Crea punti per la forma riempita
+            points = []
+            for x, intensity in zip(x_coords, waveform_section):
+                y = height - int(intensity * height * 0.8)
+                points.append((int(x), y))
+            
+            # Chiudi la forma
+            if points:
+                points.append((width, height))
+                points.append((0, height))
+                
+                # Usa il colore mid come nell'anteprima
+                color_rgb = hex_to_rgb(colors['mid'])
+                draw.polygon(points, fill=colors['mid'])
+                
+                # Aggiungi linea di contorno per maggiore definizione
+                draw.polygon(points, outline=colors['high'])
     
     elif mode == "Dense Matrix":
-        # REPLICA dello spettrogramma come heatmap
+        # CORRETTO: Implementazione completamente rifatta per evitare video nero
         stft_data = features['stft_magnitude']
         
-        # Prendi una sezione temporale più ampia per effetti dinamici
-        window_size = min(20, stft_data.shape[1] // 20)
+        # Usa una finestra temporale più ampia per vedere l'evoluzione
+        window_size = min(100, stft_data.shape[1] // 10)
         start_idx = max(0, time_idx - window_size // 2)
         end_idx = min(stft_data.shape[1], start_idx + window_size)
         
-        # Ridimensiona per adattarsi alla risoluzione
-        freq_bins = stft_data.shape[0]
+        # Assicurati che ci sia almeno un frame da mostrare
+        if end_idx <= start_idx:
+            end_idx = start_idx + 1
+        
+        freq_bins = min(stft_data.shape[0], height // 2)  # Riduci per prestazioni
         time_bins = end_idx - start_idx
         
-        cell_width = width // time_bins
-        cell_height = height // freq_bins
-        
-        for freq_idx in range(freq_bins):
-            for time_offset in range(time_bins):
-                actual_time_idx = start_idx + time_offset
-                if actual_time_idx < stft_data.shape[1]:
-                    intensity = stft_data[freq_bins - 1 - freq_idx, actual_time_idx]  # Inverti per origin='lower'
-                    
-                    # Colore tipo 'hot' colormap
-                    color_val = int(intensity * 255)
-                    red = min(255, int(color_val * 2))
-                    green = min(255, max(0, int((color_val - 128) * 2)))
-                    blue = min(255, max(0, int((color_val - 192) * 4)))
-                    
-                    color = f"#{red:02x}{green:02x}{blue:02x}"
-                    
-                    x1 = time_offset * cell_width
-                    y1 = freq_idx * cell_height
-                    x2 = x1 + cell_width
-                    y2 = y1 + cell_height
-                    
-                    if intensity > 0.1:  # Soglia per evitare rumore
-                        draw.rectangle([x1, y1, x2, y2], fill=color, outline=color)
+        if time_bins > 0 and freq_bins > 0:
+            cell_width = max(1, width // time_bins)
+            cell_height = max(1, height // freq_bins)
+            
+            for freq_idx in range(freq_bins):
+                for time_offset in range(time_bins):
+                    actual_time_idx = start_idx + time_offset
+                    if actual_time_idx < stft_data.shape[1]:
+                        # Inverti l'indice delle frequenze per avere le basse in basso
+                        intensity = stft_data[freq_bins - 1 - freq_idx, actual_time_idx]
+                        
+                        # Usa una soglia più bassa per evitare il nero
+                        if intensity > 0.05:  # Soglia ridotta
+                            # Mappa intensità su scala hot colormap
+                            intensity_scaled = min(1.0, max(0.0, intensity))
+                            
+                            # Colormap hot: nero -> rosso -> giallo -> bianco
+                            if intensity_scaled < 0.33:
+                                # Nero -> Rosso
+                                factor = intensity_scaled / 0.33
+                                red = int(255 * factor)
+                                green = 0
+                                blue = 0
+                            elif intensity_scaled < 0.66:
+                                # Rosso -> Giallo
+                                factor = (intensity_scaled - 0.33) / 0.33
+                                red = 255
+                                green = int(255 * factor)
+                                blue = 0
+                            else:
+                                # Giallo -> Bianco
+                                factor = (intensity_scaled - 0.66) / 0.34
+                                red = 255
+                                green = 255
+                                blue = int(255 * factor)
+                            
+                            color = f"#{red:02x}{green:02x}{blue:02x}"
+                            
+                            x1 = time_offset * cell_width
+                            y1 = freq_idx * cell_height
+                            x2 = min(width, x1 + cell_width)
+                            y2 = min(height, y1 + cell_height)
+                            
+                            draw.rectangle([x1, y1, x2, y2], fill=color)
     
     elif mode == "Frequency Spectrum":
-        # REPLICA delle linee di frequenza come nell'anteprima
-        time_frames = np.arange(features['freq_low'].shape[1])
-        current_window = 100  # Finestra di visualizzazione
-        
-        start_frame = max(0, time_idx - current_window)
-        end_frame = min(features['freq_low'].shape[1], time_idx + 1)
-        
-        if end_frame > start_frame:
-            # Calcola le energie medie per le tre bande
-            low_data = np.mean(features['freq_low'][:, start_frame:end_frame], axis=0)
-            mid_data = np.mean(features['freq_mid'][:, start_frame:end_frame], axis=0)
-            high_data = np.mean(features['freq_high'][:, start_frame:end_frame], axis=0)
+        # CORRETTO: Usa esattamente lo stesso calcolo dell'anteprima
+        if time_idx < features['freq_low'].shape[1]:
+            # Finestra di visualizzazione come nell'anteprima
+            window_size = min(200, features['freq_low'].shape[1])
+            start_frame = max(0, time_idx - window_size)
+            end_frame = min(features['freq_low'].shape[1], time_idx + 1)
             
-            # Crea coordinate per le linee
-            x_coords = np.linspace(0, width, len(low_data))
-            
-            # Funzione per disegnare linee spesse
-            def draw_thick_line(points_data, color, thickness=3):
-                if len(points_data) > 1:
-                    points = [(int(x), int(height - y * height * 0.8)) for x, y in points_data]
-                    
-                    # Disegna linea spessa
-                    for i in range(len(points) - 1):
-                        x1, y1 = points[i]
-                        x2, y2 = points[i + 1]
+            if end_frame > start_frame:
+                # Calcola medie esattamente come nell'anteprima
+                low_data = np.mean(features['freq_low'][:, start_frame:end_frame], axis=0)
+                mid_data = np.mean(features['freq_mid'][:, start_frame:end_frame], axis=0)
+                high_data = np.mean(features['freq_high'][:, start_frame:end_frame], axis=0)
+                
+                # Coordinate X identiche all'anteprima
+                x_coords = np.linspace(0, width, len(low_data))
+                
+                # Funzione per disegnare linee spesse
+                def draw_frequency_line(data, color, line_width=4):
+                    if len(data) > 1:
+                        points = []
+                        for x, intensity in zip(x_coords, data):
+                            # Usa la stessa scala Y dell'anteprima
+                            y = height - int(intensity * height * 0.8)
+                            points.append((int(x), y))
                         
-                        for offset in range(-thickness, thickness + 1):
-                            draw.line([x1, y1 + offset, x2, y2 + offset], fill=color, width=1)
-            
-            # Disegna le tre linee di frequenza
-            low_points = list(zip(x_coords, low_data))
-            mid_points = list(zip(x_coords, mid_data))
-            high_points = list(zip(x_coords, high_data))
-            
-            draw_thick_line(low_points, colors['low'], thickness=4)
-            draw_thick_line(mid_points, colors['mid'], thickness=4)
-            draw_thick_line(high_points, colors['high'], thickness=4)
-            
-            # Aggiungi cerchi per l'energia attuale come effetto extra
-            current_low = low_data[-1] if len(low_data) > 0 else 0
-            current_mid = mid_data[-1] if len(mid_data) > 0 else 0
-            current_high = high_data[-1] if len(high_data) > 0 else 0
-            
-            center_x, center_y = int(width * 0.85), height // 2
-            max_radius = min(width, height) // 8
-            
-            # Piccoli cerchi indicatori dell'energia corrente
-            if current_low > 0.1:
-                r = int(current_low * max_radius)
-                draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], 
-                           fill=colors['low'], outline=colors['low'])
-            
-            if current_mid > 0.1:
-                r = int(current_mid * max_radius * 0.7)
-                draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], 
-                           fill=colors['mid'], outline=colors['mid'])
-            
-            if current_high > 0.1:
-                r = int(current_high * max_radius * 0.4)
-                draw.ellipse([center_x - r, center_y - r, center_x + r, center_y + r], 
-                           fill=colors['high'], outline=colors['high'])
+                        # Disegna linea spessa
+                        for i in range(len(points) - 1):
+                            x1, y1 = points[i]
+                            x2, y2 = points[i + 1]
+                            
+                            # Linea spessa mediante offset
+                            for offset_y in range(-line_width//2, line_width//2 + 1):
+                                for offset_x in range(-1, 2):
+                                    draw.line([x1 + offset_x, y1 + offset_y, 
+                                             x2 + offset_x, y2 + offset_y], 
+                                            fill=color, width=1)
+                
+                # Disegna le tre linee con i colori configurati
+                draw_frequency_line(low_data, colors['low'], 5)
+                draw_frequency_line(mid_data, colors['mid'], 4)
+                draw_frequency_line(high_data, colors['high'], 3)
     
     return img
 
@@ -336,14 +353,15 @@ def create_preview_visualization(features: Dict[str, Any], mode: str, colors: Di
         # Media lungo le frequenze per effetto waveform
         waveform = np.mean(stft_spec, axis=0)
         ax.fill_between(time_frames, 0, waveform, color=colors['mid'], alpha=0.7)
+        ax.plot(time_frames, waveform, color=colors['high'], linewidth=1)
         ax.set_title("Classic Waveform Preview (STFT)")
         
     elif mode == "Dense Matrix":
         # Mostra spettrogramma STFT come matrice
         im = ax.imshow(features['stft_magnitude'], aspect='auto', origin='lower', 
                       cmap='hot', extent=[0, features['duration'], 0, features['stft_magnitude'].shape[0]])
-        ax.set_title("Dense Matrix Preview (STFT)")
-        plt.colorbar(im, ax=ax)
+        ax.set_title("Dense Matrix Preview (STFT Spectrogram)")
+        plt.colorbar(im, ax=ax, label='Intensity')
         
     elif mode == "Frequency Spectrum":
         # Mostra bande di frequenza nel tempo
@@ -352,14 +370,15 @@ def create_preview_visualization(features: Dict[str, Any], mode: str, colors: Di
         mid_avg = np.mean(features['freq_mid'], axis=0)
         high_avg = np.mean(features['freq_high'], axis=0)
         
-        ax.plot(time_frames, low_avg, color=colors['low'], label='Low Freq', linewidth=2)
-        ax.plot(time_frames, mid_avg, color=colors['mid'], label='Mid Freq', linewidth=2)
-        ax.plot(time_frames, high_avg, color=colors['high'], label='High Freq', linewidth=2)
+        ax.plot(time_frames, low_avg, color=colors['low'], label='Low Freq (Bass)', linewidth=3)
+        ax.plot(time_frames, mid_avg, color=colors['mid'], label='Mid Freq (Vocal)', linewidth=3)
+        ax.plot(time_frames, high_avg, color=colors['high'], label='High Freq (Treble)', linewidth=3)
         ax.legend()
-        ax.set_title("Frequency Spectrum Preview (STFT)")
+        ax.set_title("Frequency Spectrum Preview (STFT Bands)")
     
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Intensity")
+    ax.grid(True, alpha=0.3)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
@@ -378,7 +397,7 @@ def main() -> None:
         st.warning("⚠️ FFmpeg non trovato. Solo anteprima disponibile.")
     
     # Controlli interfaccia
-    st.sidebar.header("Impostazioni")
+    st.sidebar.header("🎨 Impostazioni Visualizzazione")
     
     mode = st.sidebar.selectbox("Modalità visualizzazione", list(VISUALIZATION_MODES.keys()))
     st.sidebar.caption(VISUALIZATION_MODES[mode])
@@ -387,21 +406,38 @@ def main() -> None:
     fps = st.sidebar.selectbox("Frame Rate (FPS)", FPS_OPTIONS, index=3)  # Default 30
     st.sidebar.caption(f"Fluidità: {fps} frame al secondo")
     
-    color_preset = st.sidebar.selectbox("Schema colori", list(FREQUENCY_COLOR_PRESETS.keys()))
-    colors = FREQUENCY_COLOR_PRESETS[color_preset]
+    # MIGLIORATO: Sistema colori più flessibile
+    st.sidebar.subheader("🌈 Schema Colori")
+    color_preset = st.sidebar.selectbox("Preset colori", list(FREQUENCY_COLOR_PRESETS.keys()))
     
-    # Preview colori
+    # Se è Custom, mostra color picker
+    if color_preset == "Custom":
+        colors = {
+            "high": st.sidebar.color_picker("Colore frequenze acute", "#FFFF00"),
+            "mid": st.sidebar.color_picker("Colore frequenze medie", "#00FF00"), 
+            "low": st.sidebar.color_picker("Colore frequenze basse", "#FF0000")
+        }
+    else:
+        colors = FREQUENCY_COLOR_PRESETS[color_preset].copy()
+        
+        # Possibilità di modificare i preset
+        with st.sidebar.expander("✏️ Modifica preset"):
+            colors["high"] = st.color_picker("Frequenze acute", colors["high"])
+            colors["mid"] = st.color_picker("Frequenze medie", colors["mid"])
+            colors["low"] = st.color_picker("Frequenze basse", colors["low"])
+    
+    # Preview colori migliorato
     st.sidebar.markdown("**Preview colori:**")
     col1, col2, col3 = st.sidebar.columns(3)
     with col1:
-        st.markdown(f'<div style="background-color:{colors["high"]}; height:20px; border-radius:5px;"></div>', unsafe_allow_html=True)
-        st.caption("High")
+        st.markdown(f'<div style="background-color:{colors["high"]}; height:25px; border-radius:5px; border:1px solid #333;"></div>', unsafe_allow_html=True)
+        st.caption("🎵 Acute")
     with col2:
-        st.markdown(f'<div style="background-color:{colors["mid"]}; height:20px; border-radius:5px;"></div>', unsafe_allow_html=True)
-        st.caption("Mid")
+        st.markdown(f'<div style="background-color:{colors["mid"]}; height:25px; border-radius:5px; border:1px solid #333;"></div>', unsafe_allow_html=True)
+        st.caption("🎤 Medie")
     with col3:
-        st.markdown(f'<div style="background-color:{colors["low"]}; height:20px; border-radius:5px;"></div>', unsafe_allow_html=True)
-        st.caption("Low")
+        st.markdown(f'<div style="background-color:{colors["low"]}; height:25px; border-radius:5px; border:1px solid #333;"></div>', unsafe_allow_html=True)
+        st.caption("🥁 Basse")
     
     resolution_format = st.sidebar.selectbox("Formato video", list(FORMAT_RESOLUTIONS.keys()))
     resolution = FORMAT_RESOLUTIONS[resolution_format]
@@ -409,13 +445,15 @@ def main() -> None:
     
     # Informazioni sui limiti
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Limiti:**")
+    st.sidebar.markdown("**📋 Specifiche Tecniche:**")
     st.sidebar.caption(f"• File max: {MAX_FILE_SIZE // (1024*1024)} MB")
     st.sidebar.caption(f"• Durata max: {MAX_DURATION // 60:.0f} minuti")
     st.sidebar.caption("• Analisi: STFT Spectrum")
+    st.sidebar.caption("• Qualità: Alta definizione")
     
     # Contenuto principale
-    uploaded = st.file_uploader("Carica file audio", type=["wav", "mp3", "m4a", "flac"])
+    st.header("📁 Carica Audio")
+    uploaded = st.file_uploader("Scegli file audio", type=["wav", "mp3", "m4a", "flac", "aac", "ogg"])
     
     if uploaded:
         if not validate_audio_file(uploaded):
@@ -427,77 +465,104 @@ def main() -> None:
             temp_audio = temp_file.name
         
         try:
-            with st.spinner("Elaborazione audio..."):
+            with st.spinner("🎵 Elaborazione audio..."):
                 y, sr, duration = load_and_process_audio(temp_audio)
             
             if y is None:
                 return
             
-            with st.spinner("Analisi spettro STFT..."):
+            with st.spinner("📊 Analisi spettro STFT..."):
                 features = generate_audio_features(y, sr, fps)
             
             if features is None:
                 return
             
-            # Informazioni audio
-            col1, col2, col3, col4 = st.columns(4)
+            # Informazioni audio con layout migliorato
+            st.header("📊 Informazioni Audio")
+            col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
-                st.metric("Durata", f"{duration:.1f}s")
+                st.metric("⏱️ Durata", f"{duration:.1f}s")
             with col2:
-                st.metric("BPM", f"{features['tempo']:.1f}")
+                st.metric("🥁 BPM", f"{features['tempo']:.1f}")
             with col3:
-                st.metric("Sample Rate", f"{sr} Hz")
+                st.metric("📡 Sample Rate", f"{sr} Hz")
             with col4:
-                st.metric("FPS Selezionati", f"{fps}")
+                st.metric("🎬 FPS Output", f"{fps}")
+            with col5:
+                st.metric("📐 Risoluzione", f"{resolution[0]}×{resolution[1]}")
             
-            st.success("✅ Audio processato con spettro STFT!")
+            st.success("✅ Audio processato con successo! Spettro STFT generato.")
             
             # Anteprima
-            st.subheader("🎭 Anteprima Visualizzazione")
+            st.header("🎭 Anteprima Visualizzazione")
+            st.info("💡 Questa anteprima mostra come apparirà il video finale")
             create_preview_visualization(features, mode, colors, resolution)
+            
+            # Test frame per verifica
+            if st.button("🔍 Test Frame (metà video)"):
+                test_frame_idx = int((duration * fps) // 2)
+                test_img = generate_visualization_frame_pil(features, test_frame_idx, mode, colors, resolution, fps)
+                st.image(test_img, caption=f"Frame di test #{test_frame_idx}", use_column_width=True)
             
             # Generazione video
             if ffmpeg_available:
-                st.subheader("🎬 Generazione Video")
+                st.header("🎬 Generazione Video")
                 
                 # Calcola frame totali senza limiti artificiali
                 total_frames = int(duration * fps)
-                estimated_time = total_frames / 100  # Stima approssimativa
+                estimated_time = max(10, total_frames / 50)  # Stima più realistica
                 
-                st.info(f"Video completo: {total_frames} frame a {fps} FPS (≈{estimated_time:.1f}s di elaborazione)")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.info(f"🎞️ **Frame totali:** {total_frames}")
+                    st.info(f"⏱️ **Durata:** {duration:.1f}s a {fps} FPS")
+                with col2:
+                    st.info(f"🚀 **Tempo stimato:** ≈{estimated_time:.0f}s")
+                    st.info(f"🎨 **Modalità:** {mode}")
                 
-                if st.button("🎬 Genera Video Completo", type="primary"):
-                    with st.spinner(f"Generazione {total_frames} frame..."):
+                if st.button("🎬 Genera Video Completo", type="primary", use_container_width=True):
+                    with st.spinner(f"🎨 Generazione di {total_frames} frame..."):
                         frames = []
                         progress_bar = st.progress(0)
+                        status_text = st.empty()
                         
-                        # Genera tutti i frame
+                        # Genera tutti i frame con progresso dettagliato
                         for i in range(total_frames):
                             frame = generate_visualization_frame_pil(features, i, mode, colors, resolution, fps)
                             frames.append(frame)
                             
-                            # Aggiorna progress ogni 100 frame
-                            if i % 100 == 0 or i == total_frames - 1:
-                                progress_bar.progress((i + 1) / total_frames)
+                            # Aggiorna progress ogni 50 frame o alla fine
+                            if i % 50 == 0 or i == total_frames - 1:
+                                progress = (i + 1) / total_frames
+                                progress_bar.progress(progress)
+                                status_text.text(f"Frame {i+1}/{total_frames} ({progress*100:.1f}%)")
                     
                     output_path = "output_visualization.mp4"
                     
-                    with st.spinner("Creazione video finale..."):
+                    with st.spinner("🎞️ Assemblaggio video finale con audio..."):
                         create_video_from_images(frames, temp_audio, fps, output_path, resolution)
                     
                     if os.path.exists(output_path):
+                        st.balloons()
                         st.success("🎉 Video generato con successo!")
                         
-                        # Mostra video
+                        # Mostra video con controlli
+                        st.subheader("📺 Video Generato")
                         st.video(output_path)
+                        
+                        # Informazioni file generato
+                        file_size = os.path.getsize(output_path) / (1024 * 1024)
+                        st.info(f"📁 Dimensione file: {file_size:.1f} MB")
                         
                         # Pulsante download
                         with open(output_path, "rb") as f:
+                            filename = f"soundwave_{uploaded.name.split('.')[0]}_{mode.lower().replace(' ', '_')}_{fps}fps.mp4"
                             st.download_button(
                                 "📥 Scarica Video",
                                 f.read(),
-                                file_name=f"soundwave_{mode.lower().replace(' ', '_')}_{fps}fps.mp4",
-                                mime="video/mp4"
+                                file_name=filename,
+                                mime="video/mp4",
+                                use_container_width=True
                             )
                         
                         # Pulizia
@@ -505,7 +570,14 @@ def main() -> None:
                     else:
                         st.error("❌ Errore nella generazione del video")
             else:
-                st.info("💡 Installa FFmpeg per generare video")
+                st.header("⚠️ FFmpeg Richiesto")
+                st.error("💡 Installa FFmpeg per generare video. Al momento puoi solo visualizzare l'anteprima.")
+                st.markdown("""
+                **Come installare FFmpeg:**
+                - **Windows:** Scarica da [ffmpeg.org](https://ffmpeg.org/download.html)
+                - **macOS:** `brew install ffmpeg`
+                - **Linux:** `sudo apt-get install ffmpeg`
+                """)
                 
         finally:
             cleanup_files(temp_audio)
