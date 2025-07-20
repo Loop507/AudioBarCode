@@ -150,16 +150,33 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
         stft_norm = (magnitude_db - magnitude_db.min()) / (magnitude_db.max() - magnitude_db.min() + 1e-9)
 
         # Analisi dettagliata delle frequenze (più bande)
-        n_freqs = stft_norm.shape[0]
-        # Frequenze basse (circa 20-250 Hz)
-        freq_sub_bass = stft_norm[:n_freqs//8, :]
-        freq_bass = stft_norm[n_freqs//8:n_freqs//4, :]
-        # Frequenze medie (circa 250 Hz - 4 kHz)
-        freq_low_mid = stft_norm[n_freqs//4:n_freqs//2, :]
-        freq_high_mid = stft_norm[n_freqs//2:3*n_freqs//4, :]
-        # Frequenze alte (circa 4 kHz - 20 kHz)
-        freq_presence = stft_norm[3*n_freqs//4:7*n_freqs//8, :]
-        freq_brilliance = stft_norm[7*n_freqs//8:, :]
+        n_freqs = stft_norm.shape[0] # n_fft // 2 + 1
+        
+        # Calcola le frequenze in Hz per ogni bin
+        freq_bins_hz = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+
+        # Definizioni delle bande di frequenza basate su bin_indices
+        # Queste sono le definizioni interne e non rappresentano le classiche bande musicali
+        # ma sono quelle che il codice sta già usando.
+        
+        # Frequenze basse (bin da n_freqs//8 a n_freqs//4 - 1)
+        bass_start_bin = n_freqs // 8
+        bass_end_bin = n_freqs // 4 - 1
+        freq_bass = stft_norm[bass_start_bin : bass_end_bin + 1, :]
+        bass_hz_range = (freq_bins_hz[bass_start_bin], freq_bins_hz[bass_end_bin])
+
+        # Frequenze medie (bin da n_freqs//2 a 3*n_freqs//4 - 1)
+        mid_start_bin = n_freqs // 2
+        mid_end_bin = 3 * n_freqs // 4 - 1
+        freq_high_mid = stft_norm[mid_start_bin : mid_end_bin + 1, :]
+        mid_hz_range = (freq_bins_hz[mid_start_bin], freq_bins_hz[mid_end_bin])
+
+        # Frequenze alte (bin da 7*n_freqs//8 a n_freqs - 1)
+        high_start_bin = 7 * n_freqs // 8
+        high_end_bin = n_freqs - 1
+        freq_brilliance = stft_norm[high_start_bin : high_end_bin + 1, :]
+        high_hz_range = (freq_bins_hz[high_start_bin], freq_bins_hz[high_end_bin])
+
 
         # Chromagram per tonalità
         chroma = librosa.feature.chroma_stft(y=y, sr=sr, hop_length=hop_length)
@@ -214,6 +231,11 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
             'freq_high_mid': freq_high_mid,
             'freq_presence': freq_presence,
             'freq_brilliance': freq_brilliance,
+            
+            # Range Hz per le bande principali
+            'bass_hz_range': bass_hz_range,
+            'mid_hz_range': mid_hz_range,
+            'high_hz_range': high_hz_range,
 
             # Features spettrali
             'spectral_centroid': centroid_norm,
@@ -288,14 +310,13 @@ def create_particle_system(features: Dict[str, Any], frame_idx: int, resolution:
             if len(colors) == 1:
                 color = colors[0]
             else:
-                # Per particelle, possiamo assegnare i colori in base alla dominanza delle frequenze nel momento attuale
-                # O semplicemente ciclarli per varietà se i colori sono usati per elementi diversi
+                # Assegna i colori in base alla dominanza delle frequenze
                 if bass_energy > mid_energy and bass_energy > high_energy:
-                    color = colors[0]  # Bassi
+                    color = colors[0]  # Corrisponde a "Colore Basse Frequenze"
                 elif mid_energy > high_energy:
-                    color = colors[1 % len(colors)]  # Medi
+                    color = colors[1 % len(colors)]  # Corrisponde a "Colore Medie Frequenze"
                 else:
-                    color = colors[2 % len(colors)]  # Acuti
+                    color = colors[2 % len(colors)]  # Corrisponde a "Colore Alte Frequenze"
             
             # Trasparenza basata su energia
             alpha = int(150 + current_energy * 105) # Trasparenza base più alta
@@ -364,8 +385,13 @@ def create_circular_spectrum(features: Dict[str, Any], frame_idx: int, resolutio
                     color = colors[0]
                 else:
                     # Distribuisci i colori sui bin dello spettro, ad es. i primi colori per le basse, gli ultimi per le alte
-                    color_idx = int((i / n_bins) * len(colors))
-                    color = colors[color_idx % len(colors)]
+                    # Assumiamo che colors[0] sia per basse, colors[1] per medie, colors[2] per alte
+                    if i < n_bins // 3: # Basse
+                        color = colors[0 % len(colors)]
+                    elif i < 2 * n_bins // 3: # Medie
+                        color = colors[1 % len(colors)]
+                    else: # Alte
+                        color = colors[2 % len(colors)]
 
 
                 # Spessore linea basato su magnitudine
@@ -401,7 +427,17 @@ def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tu
                 layer_offset_y = layer * 20
                 
                 # Colore layer usando i colori personalizzati, ciclando tra di essi
-                base_color = theme['colors'][layer % len(theme['colors'])]
+                # Possiamo associare il colore del layer all'energia di una banda specifica per quel layer
+                # Ad esempio, layer 0 -> basse, layer 1 -> medie, layer 2 -> alte, ecc.
+                if layer == 0:
+                    base_color = theme['colors'][0] # Basse
+                elif layer == 1:
+                    base_color = theme['colors'][1 % len(theme['colors'])] # Medie
+                elif layer == 2:
+                    base_color = theme['colors'][2 % len(theme['colors'])] # Alte
+                else:
+                    base_color = theme['colors'][layer % len(theme['colors'])] # Cicla per gli altri
+
 
                 points = []
                 for i, amplitude in enumerate(waveform_data):
@@ -475,8 +511,14 @@ def create_fluid_dynamics(features: Dict[str, Any], frame_idx: int, resolution: 
                 points.append((x, y))
 
             # Colore onda usando i colori personalizzati
-            color_idx = wave_idx % len(theme['colors'])
-            color = theme['colors'][color_idx]
+            # Possiamo associare i colori alle onde in base alla loro posizione o indice
+            if wave_idx % 3 == 0:
+                color = theme['colors'][0] # Basse
+            elif wave_idx % 3 == 1:
+                color = theme['colors'][1 % len(theme['colors'])] # Medie
+            else:
+                color = theme['colors'][2 % len(theme['colors'])] # Alte
+
 
             # Disegna onda come poligono riempito
             if len(points) > 2:
@@ -541,7 +583,13 @@ def create_geometric_patterns(features: Dict[str, Any], frame_idx: int, resoluti
                 points.append((x, y))
 
             # Colore usando i colori personalizzati
-            color = theme['colors'][ring % len(theme['colors'])]
+            # Possiamo associare i colori ai poligoni a seconda del loro 'ring' (frequenza)
+            if ring % 3 == 0:
+                color = theme['colors'][0] # Basse
+            elif ring % 3 == 1:
+                color = theme['colors'][1 % len(theme['colors'])] # Medie
+            else:
+                color = theme['colors'][2 % len(theme['colors'])] # Alte
 
             # Disegna poligono
             if len(points) > 2:
@@ -597,9 +645,13 @@ def create_neural_network(features: Dict[str, Any], frame_idx: int, resolution: 
                         line_width = max(1, int(connection_strength * 3))
 
                         # Colore connessione usando i colori personalizzati
-                        color_idx = int(connection_strength * len(theme['colors']))
-                        color_idx = min(color_idx, len(theme['colors']) - 1)
-                        color = theme['colors'][color_idx]
+                        # Colore basato sull'intensità della connessione o sulla posizione
+                        if connection_strength < 0.5: # Connessioni più deboli (basse freq)
+                            color = theme['colors'][0]
+                        elif connection_strength < 0.75: # Connessioni medie
+                            color = theme['colors'][1 % len(theme['colors'])]
+                        else: # Connessioni forti (alte freq)
+                            color = theme['colors'][2 % len(theme['colors'])]
 
                         draw.line([x1, y1, x2, y2], fill=color, width=line_width)
 
@@ -607,9 +659,13 @@ def create_neural_network(features: Dict[str, Any], frame_idx: int, resolution: 
         for x, y, activation in nodes:
             if activation > 0.2:
                 node_size = int(3 + activation * 8 * intensity)
-                color_idx = int(activation * len(theme['colors']))
-                color_idx = min(color_idx, len(theme['colors']) - 1)
-                color = theme['colors'][color_idx]
+                # Colore nodo basato sull'attivazione
+                if activation < 0.5:
+                    color = theme['colors'][0] # Basse
+                elif activation < 0.75:
+                    color = theme['colors'][1 % len(theme['colors'])] # Medie
+                else:
+                    color = theme['colors'][2 % len(theme['colors'])] # Alte
 
                 draw.ellipse([x-node_size, y-node_size, x+node_size, y+node_size], fill=color)
 
@@ -655,7 +711,13 @@ def create_galaxy_spiral(features: Dict[str, Any], frame_idx: int, resolution: T
                 points.append((x, y))
 
             # Colore braccio spirale usando i colori personalizzati
-            color = theme['colors'][arm % len(theme['colors'])]
+            # Basiamo il colore sull'indice del braccio o sull'energia complessiva
+            if arm == 0:
+                color = theme['colors'][0] # Basse
+            elif arm == 1:
+                color = theme['colors'][1 % len(theme['colors'])] # Medie
+            else:
+                color = theme['colors'][2 % len(theme['colors'])] # Alte
 
             # Disegna spirale come linea continua
             if len(points) > 1:
@@ -726,7 +788,14 @@ def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution:
                 next_y = int(target_y + offset_y)
 
                 # Colore fulmine usando i colori personalizzati
-                color = theme['colors'][lightning % len(theme['colors'])]
+                # Scegliamo un colore in base all'energia o all'indice del fulmine
+                if lightning % 3 == 0:
+                    color = theme['colors'][0] # Basse
+                elif lightning % 3 == 1:
+                    color = theme['colors'][1 % len(theme['colors'])] # Medie
+                else:
+                    color = theme['colors'][2 % len(theme['colors'])] # Alte
+
 
                 # Spessore basato su intensità
                 line_width = max(1, int(1 + current_energy * 4))
@@ -872,13 +941,15 @@ def main():
         # Selettori di colore personalizzati (sempre visibili)
         st.subheader("Colori Personalizzati")
         bg_color = st.color_picker("Colore Sfondo", value="#000015")
-        color1 = st.color_picker("Colore Primario", value="#FF0080")
-        color2 = st.color_picker("Colore Secondario", value="#00FF80")
-        color3 = st.color_picker("Colore Terziario", value="#8000FF")
+        
+        # Nomi dei colori cambiati
+        color_low_freq = st.color_picker("Colore Basse Frequenze", value="#FF0080")
+        color_mid_freq = st.color_picker("Colore Medie Frequenze", value="#00FF80")
+        color_high_freq = st.color_picker("Colore Alte Frequenze", value="#8000FF")
         
         # Creazione del dizionario del tema con i colori personalizzati
         selected_theme = {
-            "colors": [color1, color2, color3],
+            "colors": [color_low_freq, color_mid_freq, color_high_freq],
             "background": bg_color,
             "style": "custom" # Indicatore che i colori sono personalizzati
         }
@@ -949,22 +1020,40 @@ def main():
                 st.error("Errore nell'analisi audio.")
                 st.stop()
 
-            # Aggiungi analisi frequenze
-            st.markdown("### 📊 Analisi Frequenze Medie")
+            # Aggiungi analisi frequenze con range in Hz
+            st.markdown("### 📊 Analisi Frequenze in Percentuali")
             # Calcola medie globali per le bande di frequenza
             avg_bass = np.mean(features['freq_bass']) * 100 if features['freq_bass'].size > 0 else 0
-            # Ho scelto freq_high_mid come rappresentante per le medie, puoi combinare low_mid e high_mid se preferisci
             avg_mid = np.mean(features['freq_high_mid']) * 100 if features['freq_high_mid'].size > 0 else 0
             avg_high = np.mean(features['freq_brilliance']) * 100 if features['freq_brilliance'].size > 0 else 0
 
+            bass_hz_range = features['bass_hz_range']
+            mid_hz_range = features['mid_hz_range']
+            high_hz_range = features['high_hz_range']
+
             freq_col1, freq_col2, freq_col3 = st.columns(3)
             with freq_col1:
-                st.metric("Basse", f"{avg_bass:.1f}%")
+                st.metric(
+                    "Basse",
+                    f"{avg_bass:.1f}%",
+                    help=f"Range: {bass_hz_range[0]:.0f}Hz - {bass_hz_range[1]:.0f}Hz"
+                )
             with freq_col2:
-                st.metric("Medie", f"{avg_mid:.1f}%")
+                st.metric(
+                    "Medie",
+                    f"{avg_mid:.1f}%",
+                    help=f"Range: {mid_hz_range[0]:.0f}Hz - {mid_hz_range[1]:.0f}Hz"
+                )
             with freq_col3:
-                st.metric("Alte", f"{avg_high:.1f}%")
-            st.info("Questi valori indicano la presenza media di ciascuna banda di frequenza nel brano (0-100%).")
+                st.metric(
+                    "Alte",
+                    f"{avg_high:.1f}%",
+                    help=f"Range: {high_hz_range[0]:.0f}Hz - {high_hz_range[1]:.0f}Hz"
+                )
+            st.info("""
+            Questi valori indicano la presenza media di ciascuna banda di frequenza nel brano (0-100%).
+            I range in Hz si riferiscono alle specifiche suddivisioni interne utilizzate per la visualizzazione.
+            """)
 
 
             # Anteprima configurazione
