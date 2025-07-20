@@ -224,12 +224,9 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
             'chroma': chroma_norm,
             'mfcc': mfcc_norm,
 
-            # Bande frequenza dettagliate
-            'freq_sub_bass': freq_sub_bass,
+            # Bande frequenza dettagliate (solo quelle definite)
             'freq_bass': freq_bass,
-            'freq_low_mid': freq_low_mid,
             'freq_high_mid': freq_high_mid,
-            'freq_presence': freq_presence,
             'freq_brilliance': freq_brilliance,
             
             # Range Hz per le bande principali
