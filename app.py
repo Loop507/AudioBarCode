@@ -802,3 +802,453 @@ def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution:
 
             for segment in range(segments):
                 # Punto successivo
+                progress = (segment + 1) / segments
+
+                target_x = start_x + (end_x - start_x) * progress
+                target_y = start_y + (end_y - start_y) * progress
+
+                # Perturbazione casuale
+                offset_x = random.randint(-20, 20) * intensity
+                offset_y = random.randint(-10, 10) * intensity
+                next_x = int(target_x + offset_x)
+                next_y = int(target_y + offset_y)
+
+                # Colore fulmine usando i colori personalizzati
+                # Scegliamo un colore in base all'energia o all'indice del fulmine
+                if lightning % 3 == 0:
+                    color = theme['colors'][0] # Basse
+                elif lightning % 3 == 1:
+                    color = theme['colors'][1 % len(theme['colors'])] # Medie
+                else:
+                    color = theme['colors'][2 % len(theme['colors'])] # Alte
+
+
+                # Spessore basato su intensità effettiva
+                line_width = max(1, int(1 + effective_energy * 4))
+
+                # Disegna segmento
+                draw.line([current_x, current_y, next_x, next_y], fill=color, width=line_width)
+
+                # Effetto glow
+                for glow in range(1, 4):
+                    glow_width = line_width + glow
+                    r, g, b = hex_to_rgb(color)
+                    glow_alpha = max(50, 200 // glow)
+                    
+                    h, s, v = colorsys.rgb_to_hsv(r / 255., g / 255., b / 255.)
+                    v_glow = min(1.0, v * 1.5)
+                    s_glow = min(1.0, s * 0.5)
+                    r_glow, g_glow, b_glow = colorsys.hsv_to_rgb(h, s_glow, v_glow)
+                    
+                    simulated_r = int(r_glow * 255)
+                    simulated_g = int(g_glow * 255)
+                    simulated_b = int(b_glow * 255)
+                    final_glow_color = (simulated_r, simulated_g, simulated_b, glow_alpha)
+                    
+                    draw.line([current_x, current_y, next_x, next_y], fill=final_glow_color, width=glow_width)
+
+                current_x, current_y = next_x, next_y # Questa riga deve essere a livello del ciclo 'for segment'
+
+    return img
+
+def create_barcode_visualizer(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
+                              theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
+    """Crea una visualizzazione stile codice a barre più simile ai tuoi esempi."""
+    width, height = resolution
+    img = Image.new('RGB', (width, height), theme['background'])
+    draw = ImageDraw.Draw(img)
+
+    time_idx = get_time_idx(features, frame_idx, fps)
+
+    if time_idx >= 0:
+        current_energy = features['rms_energy'][time_idx]
+        effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
+        onset_strength = features['onset_strength'][time_idx]
+
+        stft_slice = features['stft_magnitude'][:, time_idx]
+        if np.max(stft_slice) > 0:
+            stft_slice_norm = stft_slice / np.max(stft_slice)
+        else:
+            stft_slice_norm = np.zeros_like(stft_slice)
+
+        num_bars = 100 # Un buon numero per un effetto "barcode" visibile
+        bar_spacing_ratio = 0.1 # Ratio dello spazio rispetto alla larghezza della barra
+        
+        # Calcola la larghezza nominale di ogni barra inclusi gli spazi
+        nominal_bar_total_width = width / num_bars
+        bar_width = nominal_bar_total_width * (1 - bar_spacing_ratio)
+        bar_space = nominal_bar_total_width * bar_spacing_ratio
+
+        for i in range(num_bars):
+            x_start = int(i * nominal_bar_total_width)
+            x_end = int(x_start + bar_width)
+
+            if x_start >= width: continue # Assicurati che non disegni fuori dai limiti
+
+            # Mappa la barra corrente a una porzione dello spettro di frequenza
+            freq_slice_start_bin = int((i / num_bars) * len(stft_slice_norm))
+            freq_slice_end_bin = int(((i + 1) / num_bars) * len(stft_slice_norm))
+            
+            if freq_slice_start_bin >= len(stft_slice_norm): continue # Limite superiore
+            
+            # Calcola la magnitudine media della frequenza per questa barra
+            bar_freq_magnitude = np.mean(stft_slice_norm[freq_slice_start_bin:freq_slice_end_bin]) if freq_slice_end_bin > freq_slice_start_bin else 0
+
+            # Altezza massima della colonna basata sull'energia generale e sulla magnitudine della frequenza
+            max_col_height = height * 0.9 * intensity
+            current_col_height = int(max_col_height * effective_energy * (0.5 + 0.5 * bar_freq_magnitude))
+            current_col_height = max(5, min(current_col_height, height - 10)) # Altezza minima, prevenire overflow
+
+            # Colore della barra in base alla sua posizione nello spettro
+            colors = theme['colors']
+            color_index = int((bar_freq_magnitude) * (len(colors) - 1)) # Colore basato sulla magnitudine della freq
+            color_index = min(color_index, len(colors) - 1)
+            bar_color = colors[color_index]
+            
+            # --- Effetto "rotto" ---
+            # Suddividiamo l'altezza in segmenti discreti
+            num_vertical_segments = 15 # Numero di possibili "slot" verticali
+            segment_unit_height = current_col_height / num_vertical_segments
+
+            # La probabilità di disegnare un segmento aumenta con l'onset_strength e la magnitudine della frequenza
+            segment_draw_prob_base = 0.3 # Probabilità base
+            segment_draw_prob = segment_draw_prob_base + (0.7 * onset_strength) + (0.3 * bar_freq_magnitude)
+            segment_draw_prob = np.clip(segment_draw_prob, 0, 1)
+
+            for seg_idx in range(num_vertical_segments):
+                # Posizione Y di partenza per il segmento
+                seg_y_base = (height - current_col_height) // 2 + seg_idx * segment_unit_height
+
+                # Altezza del segmento individuale, con casualità e influenza dell'onset
+                # Un segmento può essere più alto se l'onset è forte
+                seg_height = max(1, int(segment_unit_height * (0.5 + 0.5 * random.random() * (1 + onset_strength))))
+                seg_height = min(seg_height, current_col_height - (seg_idx * segment_unit_height)) # Non superare altezza rimanente
+
+                # Offset Y casuale per l'effetto "rotto", scalato da onset_strength e intensity
+                y_offset_random = random.uniform(-onset_strength * height * 0.02 * intensity, 
+                                                 onset_strength * height * 0.02 * intensity)
+                
+                segment_y1 = int(seg_y_base + y_offset_random)
+                segment_y2 = int(segment_y1 + seg_height)
+
+                # Assicurati che il segmento rimanga all'interno dell'immagine
+                segment_y1 = max(0, min(segment_y1, height))
+                segment_y2 = max(0, min(segment_y2, height))
+                
+                # Decidi se disegnare il segmento
+                if random.random() < segment_draw_prob:
+                    if segment_y2 > segment_y1 and bar_width > 0: # Assicura altezza e larghezza positive
+                        draw.rectangle([x_start, segment_y1, x_end, segment_y2], fill=bar_color)
+    return img
+
+
+def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
+    """Converte colore hex in RGB."""
+    hex_color = hex_color.lstrip('#')
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+def generate_artistic_visualization(features: Dict[str, Any], style: str, resolution: Tuple[int, int],
+                                  theme: Dict[str, Any], fps: int, intensity: float, global_volume_offset: float, output_dir: str) -> int:
+    """Genera visualizzazione artistica salvando direttamente su disco."""
+    duration = features['duration']
+    total_frames = int(duration * fps)
+    actual_frames = min(total_frames, MAX_DURATION * fps)
+
+    # Mappatura stili a funzioni
+    style_functions = {
+        "Particle System": create_particle_system,
+        "Circular Spectrum": create_circular_spectrum,
+        "3D Waveforms": create_3d_waveforms,
+        "Fluid Dynamics": create_fluid_dynamics,
+        "Geometric Patterns": create_geometric_patterns,
+        "Neural Network": create_neural_network,
+        "Galaxy Spiral": create_galaxy_spiral,
+        "Lightning Storm": create_lightning_storm,
+        "Barcode Visualizer": create_barcode_visualizer # Aggiunto il nuovo stile
+    }
+
+    style_func = style_functions.get(style, create_particle_system)
+    progress_bar = st.progress(0)
+    
+    for frame_idx in range(actual_frames):
+        try:
+            # Passa il nuovo parametro global_volume_offset a tutte le funzioni di stile
+            frame = style_func(features, frame_idx, resolution, theme, intensity, fps, global_volume_offset)
+            frame_path = os.path.join(output_dir, f"frame_{frame_idx:06d}.jpg")
+            frame.save(frame_path, format='JPEG', quality=85)  # Salva direttamente su disco
+            
+            progress = (frame_idx + 1) / actual_frames
+            progress_bar.progress(progress)
+            
+            # Ottimizzazione memoria
+            del frame
+            if frame_idx % 50 == 0:
+                gc.collect()
+                
+        except Exception as e:
+            st.error(f"Errore generazione frame {frame_idx}: {e}")
+            break
+            
+    return frame_idx + 1  # Numero di frame generati
+
+def create_video_ffmpeg_pipe(fps: int, output_path: str, audio_path: str, frame_dir: str, frame_count: int) -> bool:
+    """Crea video usando FFmpeg con input da pipe (zero-copy)"""
+    try:
+        # Comando FFmpeg con input da immagini
+        ffmpeg_cmd = [
+            'ffmpeg', '-y',
+            '-f', 'image2pipe',
+            '-framerate', str(fps),
+            '-i', '-',
+            '-i', audio_path,
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-crf', '18',
+            '-c:a', 'aac',
+            '-shortest',
+            output_path
+        ]
+        
+        process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+
+        # Invia frame a FFmpeg via stdin
+        for i in range(frame_count):
+            frame_path = os.path.join(frame_dir, f"frame_{i:06d}.jpg")
+            with open(frame_path, 'rb') as f:
+                process.stdin.write(f.read())
+            # Cancella frame dopo l'uso
+            os.unlink(frame_path)
+            
+        process.stdin.close()
+        process.wait()
+        
+        return process.returncode == 0
+        
+    except Exception as e:
+        st.error(f"Errore creazione video: {e}")
+        return False
+
+def main():
+    """Applicazione principale."""
+    st.set_page_config(
+        page_title="SoundWave Visualizer - Artistic Edition",
+        page_icon="🎵",
+        layout="wide"
+    )
+
+    # Titolo modificato con "by Loop507" più piccolo
+    st.markdown("<h1>🎵 SoundWave Visualizer - Artistic Edition <span style='font-size: 0.5em;'>by Loop507</span></h1>", unsafe_allow_html=True)
+    st.markdown("*Trasforma la tua musica in arte visiva*")
+
+    # Check FFmpeg
+    if not check_ffmpeg():
+        st.error("❌ FFmpeg non trovato. Installare FFmpeg per continuare.")
+        st.stop()
+
+    # Sidebar configurazioni
+    with st.sidebar:
+        st.header("🎨 Configurazioni Artistiche")
+
+        # Stile artistico
+        selected_style = st.selectbox(
+            "Stile Visualizzazione",
+            list(ARTISTIC_STYLES.keys()),
+            format_func=lambda x: ARTISTIC_STYLES[x]
+        )
+
+        # Selettori di colore personalizzati (sempre visibili)
+        st.subheader("Colori Personalizzati")
+        bg_color = st.color_picker("Colore Sfondo", value="#000015")
+        
+        # Nomi dei colori cambiati
+        color_low_freq = st.color_picker("Colore Basse Frequenze", value="#FF0080")
+        color_mid_freq = st.color_picker("Colore Medie Frequenze", value="#00FF80")
+        color_high_freq = st.color_picker("Colore Alte Frequenze", value="#8000FF")
+        
+        # Creazione del dizionario del tema con i colori personalizzati
+        selected_theme_data = { # Rinominato per evitare conflitto con selected_theme (stringa)
+            "colors": [color_low_freq, color_mid_freq, color_high_freq],
+            "background": bg_color,
+            "style": "custom" # Indicatore che i colori sono personalizzati
+        }
+        selected_theme_name = "Personalizzato" # Per visualizzazione nell'anteprima
+
+
+        # Intensità movimento
+        movement_intensity = st.selectbox(
+            "Intensità Movimento",
+            list(MOVEMENT_INTENSITY.keys())
+        )
+
+        # NUOVO SLIDER: Volume Generale Offset
+        global_volume_offset = st.slider(
+            "Volume Generale (Offset)",
+            min_value=0.1,  # Permette di rendere il visualizzatore molto debole
+            max_value=3.0,  # Permette di renderlo molto forte
+            value=1.0,      # Valore predefinito (nessun offset)
+            step=0.1,
+            help="Aggiusta l'impatto del volume generale del brano sulla visualizzazione. Valori più alti rendono le forme più grandi/reattive per lo stesso volume audio."
+        )
+
+        # Risoluzione
+        format_ratio = st.selectbox(
+            "Formato Video",
+            list(FORMAT_RESOLUTIONS.keys())
+        )
+
+        # FPS
+        fps = st.selectbox("Frame Rate", FPS_OPTIONS, index=1)
+
+        st.markdown("---")
+        st.markdown("### 📋 Info Limiti")
+        st.info(f"""
+        **Durata max:** {MAX_DURATION//60} minuti
+        **File max:** {MAX_FILE_SIZE//(1024*1024)} MB
+        """)
+
+    # Upload file
+    uploaded_file = st.file_uploader(
+        "🎵 Carica il tuo file audio",
+        type=['mp3', 'wav', 'flac', 'm4a', 'aac'],
+        help="Formati supportati: MP3, WAV, FLAC, M4A, AAC"
+    )
+
+    if uploaded_file:
+        if not validate_audio_file(uploaded_file):
+            st.stop()
+
+        # Salva file temporaneo
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+            tmp_file.write(uploaded_file.read())
+            temp_audio_path = tmp_file.name
+
+        try:
+            # Carica e processa audio
+            with st.spinner("🎵 Analizzando audio..."):
+                y, sr, duration = load_and_process_audio(temp_audio_path)
+
+            if y is None:
+                st.error("Impossibile caricare il file audio.")
+                st.stop()
+
+            # Mostra info audio
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Durata", f"{duration:.1f}s")
+            with col2:
+                st.metric("Sample Rate", f"{sr} Hz")
+            with col3:
+                st.metric("Risoluzione", f"{FORMAT_RESOLUTIONS[format_ratio][0]}x{FORMAT_RESOLUTIONS[format_ratio][1]}")
+
+            # Genera features avanzate
+            with st.spinner("🧠 Generando features audio avanzate..."):
+                features = generate_enhanced_audio_features(y, sr, fps)
+
+            if features is None:
+                st.error("Errore nell'analisi audio.")
+                st.stop()
+
+            # Aggiungi analisi frequenze con range in Hz
+            st.markdown("### 📊 Analisi Frequenze in Percentuali")
+            # Calcola medie globali per le bande di frequenza
+            avg_bass = np.mean(features['freq_bass']) * 100 if features['freq_bass'].size > 0 else 0
+            avg_mid = np.mean(features['freq_high_mid']) * 100 if features['freq_high_mid'].size > 0 else 0
+            avg_high = np.mean(features['freq_brilliance']) * 100 if features['freq_brilliance'].size > 0 else 0
+
+            bass_hz_range = features['bass_hz_range']
+            mid_hz_range = features['mid_hz_range']
+            high_hz_range = features['high_hz_range']
+
+            freq_col1, freq_col2, freq_col3 = st.columns(3)
+            with freq_col1:
+                st.metric(
+                    "Basse",
+                    f"{avg_bass:.1f}%",
+                    help=f"Range: {bass_hz_range[0]:.0f}Hz - {bass_hz_range[1]:.0f}Hz"
+                )
+            with freq_col2:
+                st.metric(
+                    "Medie",
+                    f"{avg_mid:.1f}%",
+                    help=f"Range: {mid_hz_range[0]:.0f}Hz - {mid_hz_range[1]:.0f}Hz"
+                )
+            with freq_col3:
+                st.metric(
+                    "Alte",
+                    f"{avg_high:.1f}%",
+                    help=f"Range: {high_hz_range[0]:.0f}Hz - {high_hz_range[1]:.0f}Hz"
+                )
+            st.info("""
+            Questi valori indicano la presenza media di ciascuna banda di frequenza nel brano (0-100%).
+            I range in Hz si riferiscono alle specifiche suddivisioni interne utilizzate per la visualizzazione, ora più vicine a quelle musicali.
+            """)
+
+
+            # Anteprima configurazione
+            st.markdown("### 🎨 Anteprima Configurazione")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.info(f"""
+                **Stile:** {ARTISTIC_STYLES[selected_style]}
+                **Tema:** {selected_theme_name}
+                **Intensità:** {movement_intensity}
+                """)
+
+            with col2:
+                st.info(f"""
+                **Formato:** {format_ratio}
+                **FPS:** {fps}
+                **Volume Offset:** {global_volume_offset}
+                **Frames totali:** ~{int(duration * fps)}
+                """)
+
+            # Bottone genera
+            if st.button("🚀 Genera Visualizzazione Artistica", type="primary"):
+                # theme e intensity sono già impostati in base ai selettori
+                intensity_value = MOVEMENT_INTENSITY[movement_intensity]
+                resolution = FORMAT_RESOLUTIONS[format_ratio]
+                
+                # Crea directory temporanea per i frame
+                with tempfile.TemporaryDirectory() as frame_dir:
+                    # Genera visualizzazione
+                    with st.spinner("🎨 Creando arte visiva..."):
+                        frame_count = generate_artistic_visualization(
+                            features, selected_style, resolution, selected_theme_data, fps, intensity_value, global_volume_offset, frame_dir
+                        )
+                    
+                    if frame_count > 0:
+                        # Crea video
+                        output_path = f"soundwave_artistic_{selected_style.lower().replace(' ', '_')}.mp4"
+                        
+                        with st.spinner("🎬 Creando video finale..."):
+                            success = create_video_ffmpeg_pipe(
+                                fps, output_path, temp_audio_path, frame_dir, frame_count
+                            )
+                        
+                        if success and os.path.exists(output_path):
+                            st.success("✅ Video creato con successo!")
+
+                            # Mostra video
+                            st.video(output_path)
+
+                            # Download
+                            with open(output_path, 'rb') as video_file:
+                                st.download_button(
+                                    "📥 Scarica Video",
+                                    video_file.read(),
+                                    file_name=output_path,
+                                    mime="video/mp4"
+                                )
+                        else:
+                            st.error("❌ Errore nella creazione del video.")
+                    else:
+                        st.error("❌ Nessun frame generato.")
+
+        finally:
+            # Cleanup
+            if os.path.exists(temp_audio_path):
+                os.unlink(temp_audio_path)
+
+if __name__ == "__main__":
+    main()
