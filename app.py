@@ -8,14 +8,13 @@ import gc
 import tempfile
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from PIL import Image, ImageDraw, ImageColor, ImageFilter
+from PIL import Image, ImageDraw, ImageColor, ImageFilter, ImageFont # AGGIUNTO ImageFont
 import io
 from typing import Tuple, Optional, Dict, Any
 import colorsys
 import math
 import random
 import sys
-# import importlib # Non più necessario se non gestisci import dinamici dopo la rimozione
 
 # ==========================================
 # GESTIONE DELLE DIPENDENZE - ORA GESTITA TRAMITE requirements.txt
@@ -59,13 +58,12 @@ ARTISTIC_STYLES: Dict[str, str] = {
 
 # INTENSITÀ MOVIMENTO - AGGIORNATA
 MOVEMENT_INTENSITY: Dict[str, float] = {
-    "Soft": 0.2, # Ridotto per una differenza più marcata
-    "Medio": 1.0, # Aumentato per una chiara distinzione
-    "Hard": 3.0 # Aumentato significativamente per un effetto molto pronunciato
+    "Soft": 0.2,
+    "Medio": 1.0,
+    "Hard": 3.0
 }
 
 # TEMI COLORE ARTISTICI - MANTENUTI PER GLI ALTRI STILI, MA USEREMO SCELTA PERSONALIZZATA PER PARTICELLE
-# Questi temi non saranno più selezionabili direttamente, ma i loro colori predefiniti possono essere usati come esempio per i color picker.
 ARTISTIC_COLOR_THEMES: Dict[str, Dict[str, Any]] = {
     "Neon Cyber": {
         "colors": ["#FF0080", "#00FF80", "#8000FF", "#FF8000"],
@@ -100,7 +98,6 @@ ARTISTIC_COLOR_THEMES: Dict[str, Dict[str, Any]] = {
 }
 
 # Costanti per la definizione delle bande di frequenza (Hz)
-# Questi sono range tipici per l'analisi musicale
 BASS_HZ_RANGE = (20, 500)
 MID_HZ_RANGE = (500, 4000)
 HIGH_HZ_RANGE = (4000, 11000) # Fino al limite di Nyquist per SR=22050
@@ -160,22 +157,18 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
         freq_bins_hz = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
         # Trova gli indici dei bin per le bande di frequenza definite in Hz
-        # BASS_HZ_RANGE
         bass_start_bin = np.searchsorted(freq_bins_hz, BASS_HZ_RANGE[0])
         bass_end_bin = np.searchsorted(freq_bins_hz, BASS_HZ_RANGE[1], side='right') - 1
-        # Assicurati che gli indici siano validi e in ordine
         bass_start_bin = max(0, bass_start_bin)
         bass_end_bin = min(len(freq_bins_hz) - 1, bass_end_bin)
         freq_bass = stft_norm[bass_start_bin : bass_end_bin + 1, :]
 
-        # MID_HZ_RANGE
         mid_start_bin = np.searchsorted(freq_bins_hz, MID_HZ_RANGE[0])
         mid_end_bin = np.searchsorted(freq_bins_hz, MID_HZ_RANGE[1], side='right') - 1
         mid_start_bin = max(0, mid_start_bin)
         mid_end_bin = min(len(freq_bins_hz) - 1, mid_end_bin)
         freq_high_mid = stft_norm[mid_start_bin : mid_end_bin + 1, :]
 
-        # HIGH_HZ_RANGE
         high_start_bin = np.searchsorted(freq_bins_hz, HIGH_HZ_RANGE[0])
         high_end_bin = np.searchsorted(freq_bins_hz, HIGH_HZ_RANGE[1], side='right') - 1
         high_start_bin = max(0, high_start_bin)
@@ -195,15 +188,13 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
 
         # Normalizzazione features
         centroid_norm = (spectral_centroid - spectral_centroid.min()) / (spectral_centroid.max() - spectral_centroid.min() + 1e-9)
-        # CORREZIONE QUI: Usare spectral_rolloff.min() e spectral_rolloff.max()
         rolloff_norm = (spectral_rolloff - spectral_rolloff.min()) / (spectral_rolloff.max() - spectral_rolloff.min() + 1e-9)
         bandwidth_norm = (spectral_bandwidth - spectral_bandwidth.min()) / (spectral_bandwidth.max() - spectral_bandwidth.min() + 1e-9)
         zcr_norm = (zero_crossing_rate - zero_crossing_rate.min()) / (zero_crossing_rate.max() - zero_crossing_rate.min() + 1e-9)
 
         # RMS Energy e onset detection
         rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
-        # rms_norm = (rms - rms.min()) / (rms.max() - rms.min() + 1e-9) # Vecchia normalizzazione
-        rms_norm = np.clip(rms / np.max(rms) if np.max(rms) > 0 else rms, 0, 1) # Nuova normalizzazione: RMS relativo al suo picco nel brano, quindi sensibile al volume relativo ma ancora 0-1
+        rms_norm = np.clip(rms / np.max(rms) if np.max(rms) > 0 else rms, 0, 1)
 
         # Onset detection per eventi musicali
         onset_frames = librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop_length)
@@ -248,7 +239,7 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
             'zero_crossing_rate': zcr_norm,
 
             # Energy e dinamica
-            'rms_energy': rms_norm, # Questa è la feature che verrà scalata dal nuovo slider
+            'rms_energy': rms_norm,
             'onset_strength': onset_norm,
             'onset_frames': onset_frames,
 
@@ -261,7 +252,7 @@ def generate_enhanced_audio_features(y: np.ndarray, sr: int, fps: int) -> Option
             'sr': sr,
             'duration': duration,
             'magnitude_raw': magnitude,
-            'n_fft': n_fft # Aggiungi n_fft per riferimento a freq_bins
+            'n_fft': n_fft
         }
     except Exception as e:
         st.error(f"Errore feature avanzate: {e}")
@@ -271,95 +262,142 @@ def get_time_idx(features: Dict[str, Any], frame_idx: int, fps: int) -> int:
     """Calcola l'indice temporale STFT/feature per un dato frame video."""
     current_time = frame_idx / fps
     time_idx = librosa.time_to_frames(current_time, sr=features['sr'], hop_length=features['hop_length'])
-    # Assicurati che l'indice non superi i limiti dell'array delle feature
     return min(time_idx, features['rms_energy'].shape[0] - 1)
 
+def draw_text_on_frame(draw: ImageDraw.Draw, resolution: Tuple[int, int], custom_text: str,
+                       text_font: Any, text_color: str, text_position: str):
+    """Disegna testo su un frame."""
+    width, height = resolution
+    text_rgb = hex_to_rgb(text_color)
+    
+    if not custom_text:
+        return # Non disegnare se il testo è vuoto
+
+    # Calcola la dimensione del testo
+    # text_bbox è (left, top, right, bottom)
+    text_bbox = draw.textbbox((0, 0), custom_text, font=text_font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+
+    # Calcola la posizione
+    x_text, y_text = 0, 0
+    padding = 10 # Spaziatura dai bordi
+
+    if text_position == "Top-Left":
+        x_text, y_text = padding, padding
+    elif text_position == "Top-Center":
+        x_text = (width - text_width) // 2
+        y_text = padding
+    elif text_position == "Top-Right":
+        x_text = width - text_width - padding
+        y_text = padding
+    elif text_position == "Bottom-Left":
+        x_text = padding
+        y_text = height - text_height - padding
+    elif text_position == "Bottom-Center":
+        x_text = (width - text_width) // 2
+        y_text = height - text_height - padding
+    elif text_position == "Bottom-Right":
+        x_text = width - text_width - padding
+        y_text = height - text_height - padding
+    elif text_position == "Center":
+        x_text = (width - text_width) // 2
+        y_text = (height - text_height) // 2
+
+    draw.text((x_text, y_text), custom_text, font=text_font, fill=text_rgb)
+
+
+# --- FUNZIONI DI STILE MODIFICATE PER SFONDO E TESTO ---
 
 def create_particle_system(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                         theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Crea sistema particellare che danza con la musica (Modificato per maggiore intensità)."""
+                         theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                         background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                         text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
-        # Energia attuale e vicine per movimento fluido
         current_energy = features['rms_energy'][time_idx]
-        effective_energy = np.clip(current_energy * global_volume_offset, 0, 1) # Applica offset e clippa
-        onset_strength = features['onset_strength'][time_idx] # onsets are also indexed by time_idx
+        effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
+        onset_strength = features['onset_strength'][time_idx]
 
-        # Ottieni valori spettrali per colori (questi non sono direttamente influenzati dal volume generale per mantenere coerenza cromatica)
         bass_energy = np.mean(features['freq_bass'][:, time_idx])
         mid_energy = np.mean(features['freq_high_mid'][:, time_idx])
         high_energy = np.mean(features['freq_brilliance'][:, time_idx])
 
-        # NUOVE IMPOSTAZIONI PER PARTICELLE PIÙ INTENSE E PIENE
-        # Numero particelle aumentato e più reattivo
-        num_particles = int(200 + effective_energy * 500 * intensity) # Aumentato base e reattività
+        num_particles = int(200 + effective_energy * 500 * intensity)
 
-        # Genera particelle
         for i in range(num_particles):
-            # Posizione influenzata da frequenze diverse
-            angle = (i / num_particles) * 2 * np.pi + frame_idx * 0.08 * intensity # Velocità di rotazione aumentata
-
-            # Raggio basato su energia e frequenze
-            base_radius = min(width, height) * 0.15 # Raggio base leggermente più grande
-            radius_variation = (bass_energy * 0.5 + mid_energy * 0.3 + high_energy * 0.2) * min(width, height) * 0.4 # Più variazione
-            radius = base_radius + radius_variation * (1 + np.sin(angle * 5 + frame_idx * 0.15)) # Oscillazione più complessa e veloce
+            angle = (i / num_particles) * 2 * np.pi + frame_idx * 0.08 * intensity
+            base_radius = min(width, height) * 0.15
+            radius_variation = (bass_energy * 0.5 + mid_energy * 0.3 + high_energy * 0.2) * min(width, height) * 0.4
+            radius = base_radius + radius_variation * (1 + np.sin(angle * 5 + frame_idx * 0.15))
 
             center_x, center_y = width // 2, height // 2
-            x = int(center_x + radius * np.cos(angle) * (1 + effective_energy * 0.2)) # Posizione più reattiva
+            x = int(center_x + radius * np.cos(angle) * (1 + effective_energy * 0.2))
             y = int(center_y + radius * np.sin(angle) * (1 + effective_energy * 0.2))
 
-            # Dimensione particella più grande e reattiva
-            particle_size = int(4 + onset_strength * 25 + effective_energy * 15 * intensity) # Dimensione base aumentata e reattività
-            particle_size = max(1, particle_size) # Assicura dimensione minima
+            particle_size = int(4 + onset_strength * 25 + effective_energy * 15 * intensity)
+            particle_size = max(1, particle_size)
 
-            # Colore basato su frequenza dominante o ciclico se ci sono più colori
             colors = theme['colors']
             if len(colors) == 1:
                 color = colors[0]
             else:
-                # Assegna i colori in base alla dominanza delle frequenze
                 if bass_energy > mid_energy and bass_energy > high_energy:
-                    color = colors[0]  # Corrisponde a "Colore Basse Frequenze"
+                    color = colors[0]
                 elif mid_energy > high_energy:
-                    color = colors[1 % len(colors)]  # Corrisponde a "Colore Medie Frequenze"
+                    color = colors[1 % len(colors)]
                 else:
-                    color = colors[2 % len(colors)]  # Corrisponde a "Colore Alte Frequenze"
+                    color = colors[2 % len(colors)]
             
-            # Trasparenza basata su energia
-            alpha = int(150 + effective_energy * 105) # Trasparenza base più alta
+            alpha = int(150 + effective_energy * 105)
 
-            # Disegna particella con glow potenziato
-            for glow_radius in range(particle_size + 6, particle_size - 1, -1): # Range glow più ampio
-                glow_alpha = max(10, alpha // (glow_radius - particle_size + 2)) # Decay più lento del glow
-                if glow_radius > particle_size: # Per il glow esterno
+            for glow_radius in range(particle_size + 6, particle_size - 1, -1):
+                glow_alpha = max(10, alpha // (glow_radius - particle_size + 2))
+                if glow_radius > particle_size:
                     r, g, b = hex_to_rgb(color)
                     h, s, v = colorsys.rgb_to_hsv(r / 255., g / 255., b / 255.)
-                    v_glow = min(1.0, v * 1.5) # Aumenta la luminosità
-                    s_glow = min(1.0, s * 0.8) # Mantiene saturazione, ma può essere ridotta per un glow più diffuso
+                    v_glow = min(1.0, v * 1.5)
+                    s_glow = min(1.0, s * 0.8)
                     r_glow, g_glow, b_glow = colorsys.hsv_to_rgb(h, s_glow, v_glow)
                     r_glow_int = int(r_glow * 255)
                     g_glow_int = int(g_glow * 255)
                     b_glow_int = int(b_glow * 255)
                     final_glow_color = (r_glow_int, g_glow_int, b_glow_int, glow_alpha)
-                else: # Per la particella centrale
-                    final_glow_color = (*hex_to_rgb(color), alpha) # Particella interna opaca
+                else:
+                    final_glow_color = (*hex_to_rgb(color), alpha)
 
                 draw.ellipse([x - glow_radius, y - glow_radius,
                             x + glow_radius, y + glow_radius], fill=final_glow_color)
-
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
     return img.convert('RGB')
 
 
 def create_circular_spectrum(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                           theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Crea spettro circolare rotante."""
+                           theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                           background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                           text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGB', (width, height), theme['background'])
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
@@ -368,62 +406,59 @@ def create_circular_spectrum(features: Dict[str, Any], frame_idx: int, resolutio
         center_x, center_y = width // 2, height // 2
         max_radius = min(width, height) * 0.4
 
-        # Ottieni dati spettrali
         spectrum_slice = features['stft_magnitude'][:, time_idx]
         n_bins = len(spectrum_slice)
 
-        # Rotazione basata su tempo e intensità
         rotation_offset = frame_idx * 0.02 * intensity
 
-        # Energia attuale per scalare la reattività del raggio
         current_energy = features['rms_energy'][time_idx]
         effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
 
-        for i in range(0, n_bins, max(1, n_bins // 120)):  # Campiona spettro
+        for i in range(0, n_bins, max(1, n_bins // 120)):
             if i < len(spectrum_slice):
                 magnitude = spectrum_slice[i]
 
-                # Angolo
                 angle = (i / n_bins) * 2 * np.pi + rotation_offset
 
-                # Raggio interno e esterno, influenzati dall'energia effettiva
                 inner_radius = max_radius * 0.3
-                outer_radius = inner_radius + magnitude * max_radius * 0.6 * intensity * effective_energy # Scalato dall'offset
+                outer_radius = inner_radius + magnitude * max_radius * 0.6 * intensity * effective_energy
 
-                # Posizioni
                 x1 = int(center_x + inner_radius * np.cos(angle))
                 y1 = int(center_y + inner_radius * np.sin(angle))
                 x2 = int(center_x + outer_radius * np.cos(angle))
                 y2 = int(center_y + outer_radius * np.sin(angle))
 
-                # Colore basato su frequenza usando i colori personalizzati
                 colors = theme['colors']
                 if len(colors) == 1:
                     color = colors[0]
                 else:
-                    # Distribuisci i colori sui bin dello spettro, ad es. i primi colori per le basse, gli ultimi per le alte
-                    # Assumiamo che colors[0] sia per basse, colors[1] per medie, colors[2] per alte
-                    if i < n_bins // 3: # Basse
+                    if i < n_bins // 3:
                         color = colors[0 % len(colors)]
-                    elif i < 2 * n_bins // 3: # Medie
+                    elif i < 2 * n_bins // 3:
                         color = colors[1 % len(colors)]
-                    else: # Alte
+                    else:
                         color = colors[2 % len(colors)]
+                
+                line_width = max(1, int(magnitude * 5 * effective_energy + 1))
 
-
-                # Spessore linea basato su magnitudine e energia effettiva
-                line_width = max(1, int(magnitude * 5 * effective_energy + 1)) # Scalato dall'offset
-
-                # Disegna linea radiale
                 draw.line([x1, y1, x2, y2], fill=color, width=line_width)
-
-    return img
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
+    return img.convert('RGB')
 
 def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                       theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Crea onde pseudo-3D dinamiche."""
+                       theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                       background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                       text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGB', (width, height), theme['background'])
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
@@ -432,71 +467,65 @@ def create_3d_waveforms(features: Dict[str, Any], frame_idx: int, resolution: Tu
         current_energy = features['rms_energy'][time_idx]
         effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
 
-        # Finestra temporale per waveform
         window_size = min(100, features['rms_energy'].shape[0] // 4)
         start_idx = max(0, time_idx - window_size // 2)
         end_idx = min(features['rms_energy'].shape[0], start_idx + window_size)
 
         if end_idx > start_idx:
-            # Qui usiamo la waveform originale normalizzata, ma la sua altezza sarà influenzata da effective_energy
             waveform_data = features['rms_energy'][start_idx:end_idx]
 
-            # Crea multiple "layers" per effetto 3D
             layers = 5
             for layer in range(layers):
                 layer_offset_y = layer * 20
                 
-                # Colore layer usando i colori personalizzati, ciclando tra di essi
-                # Possiamo associare il colore del layer all'energia di una banda specifica per quel layer
-                # Ad esempio, layer 0 -> basse, layer 1 -> medie, layer 2 -> alte, ecc.
                 if layer == 0:
-                    base_color = theme['colors'][0] # Basse
+                    base_color = theme['colors'][0]
                 elif layer == 1:
-                    base_color = theme['colors'][1 % len(theme['colors'])] # Medie
-                else: # layers 2+
-                    base_color = theme['colors'][2 % len(theme['colors'])] # Alte (or cycle)
-
+                    base_color = theme['colors'][1 % len(theme['colors'])]
+                else:
+                    base_color = theme['colors'][2 % len(theme['colors'])]
 
                 points = []
                 for i, amplitude in enumerate(waveform_data):
                     x = int((i / len(waveform_data)) * width)
-
-                    # Effetto 3D: oscillazione verticale + prospettiva, scalato da effective_energy
                     base_y = height // 2 + layer_offset_y
                     wave_y = int(amplitude * height * 0.3 * intensity * np.sin(frame_idx * 0.1 + layer) * effective_energy)
                     y = base_y - wave_y
 
                     points.append((x, y))
 
-                # Disegna layer
                 if len(points) > 1:
-                    # Crea poligono riempito per effetto volume
                     fill_points = points + [(width, height), (0, height)]
 
-                    # Colore con trasparenza simulata (PIL non gestisce RGBA per poligoni/linee direttamente)
-                    # useremo un colore più scuro per i layer più lontani
                     r, g, b = hex_to_rgb(base_color)
-                    dark_factor = 1.0 - (layer / (layers * 1.5)) # Più scuro se più lontano
+                    dark_factor = 1.0 - (layer / (layers * 1.5))
                     r = int(r * dark_factor)
                     g = int(g * dark_factor)
                     b = int(b * dark_factor)
-                    layer_color = f"#{r:02x}{g:02x}{b:02x}"
+                    layer_color = (r, g, b, 255) # Use RGBA directly for fill in PIL
 
-                    # Disegna riempimento
                     draw.polygon(fill_points, fill=layer_color)
 
-                    # Linea di contorno, scalata da effective_energy (es. spessore linea)
-                    line_thickness = max(1, int(2 * effective_energy)) # Più sottile per volume basso
+                    line_thickness = max(1, int(2 * effective_energy))
                     for i in range(len(points) - 1):
                         draw.line([points[i], points[i + 1]], fill=base_color, width=line_thickness)
-
-    return img
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
+    return img.convert('RGB')
 
 def create_fluid_dynamics(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                         theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Simula dinamica fluidi con la musica."""
+                         theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                         background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                         text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGB', (width, height), theme['background'])
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
@@ -505,71 +534,58 @@ def create_fluid_dynamics(features: Dict[str, Any], frame_idx: int, resolution: 
         current_energy = features['rms_energy'][time_idx]
         effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
 
-        # Parametri fluido
         num_waves = 8
 
         for wave_idx in range(num_waves):
-            # Fase della singola onda
             wave_phase = frame_idx * 0.05 * intensity + wave_idx * np.pi / 4
-
-            # Ampiezza basata su energia effettiva
             amplitude = effective_energy * height * 0.2 * intensity
-
-            # Frequenza onda
             frequency = 0.01 + wave_idx * 0.005
 
             points = []
-            for x in range(0, width, 5):  # Ogni 5 pixel per performance
-                # Onda sinusoidale con variazioni
+            for x in range(0, width, 5):
                 y_base = height // 2 + wave_idx * 30 - num_waves * 15
                 y_offset = amplitude * np.sin(x * frequency + wave_phase)
                 y = int(y_base + y_offset)
-
-                # Mantieni nel range
                 y = max(0, min(height - 1, y))
                 points.append((x, y))
 
-            # Colore onda usando i colori personalizzati
-            # Possiamo associare i colori alle onde in base alla loro posizione o indice
             if wave_idx % 3 == 0:
-                color = theme['colors'][0] # Basse
+                color = theme['colors'][0]
             elif wave_idx % 3 == 1:
-                color = theme['colors'][1 % len(theme['colors'])] # Medie
+                color = theme['colors'][1 % len(theme['colors'])]
             else:
-                color = theme['colors'][2 % len(theme['colors'])] # Alte
+                color = theme['colors'][2 % len(theme['colors'])]
 
-
-            # Disegna onda come poligono riempito
             if len(points) > 2:
-                # Crea forma chiusa per riempimento
                 bottom_points = [(width, height), (0, height)]
                 wave_polygon = points + bottom_points
 
-                # Trasparenza per sovrapposizione, basata su effective_energy
                 r, g, b = hex_to_rgb(color)
-                alpha = int(100 + effective_energy * 100)
+                alpha = int(100 + effective_energy * 155) # Use 255 for full opacity
+                wave_color_with_alpha = (r, g, b, alpha)
 
-                # PIL non supporta alpha direttamente, usiamo colori più scuri per trasparenza
-                dark_factor = alpha / 255
-                r = int(r * dark_factor)
-                g = int(g * dark_factor)
-                b = int(b * dark_factor)
-                wave_color = f"#{r:02x}{g:02x}{b:02x}"
+                draw.polygon(wave_polygon, fill=wave_color_with_alpha)
 
-                draw.polygon(wave_polygon, fill=wave_color)
-
-                # Contorno, spessore scalato da effective_energy
                 line_thickness = max(1, int(2 * effective_energy))
                 for i in range(len(points) - 1):
                     draw.line([points[i], points[i + 1]], fill=color, width=line_thickness)
-
-    return img
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
+    return img.convert('RGB')
 
 def create_geometric_patterns(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                            theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Crea pattern geometrici animati."""
+                            theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                            background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                            text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGB', (width, height), theme['background'])
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
@@ -579,22 +595,17 @@ def create_geometric_patterns(features: Dict[str, Any], frame_idx: int, resoluti
         effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
         center_x, center_y = width // 2, height // 2
 
-        # Pattern concentrici
         num_rings = 6
         base_radius = min(width, height) * 0.05
 
         for ring in range(num_rings):
-            # Raggio anello, pulsazione scalata da effective_energy
             radius = base_radius + ring * (min(width, height) * 0.08)
-            radius *= (1 + effective_energy * intensity * 0.5)  # Pulsazione
+            radius *= (1 + effective_energy * intensity * 0.5)
 
-            # Rotazione
             rotation = frame_idx * 0.02 * intensity + ring * 0.5
 
-            # Numero lati poligono
             sides = 3 + ring
 
-            # Punti poligono
             points = []
             for side in range(sides):
                 angle = (side / sides) * 2 * np.pi + rotation
@@ -602,37 +613,40 @@ def create_geometric_patterns(features: Dict[str, Any], frame_idx: int, resoluti
                 y = int(center_y + radius * np.sin(angle))
                 points.append((x, y))
 
-            # Colore usando i colori personalizzati
-            # Possiamo associare i colori ai poligoni a seconda del loro 'ring' (frequenza)
             if ring % 3 == 0:
-                color = theme['colors'][0] # Basse
+                color = theme['colors'][0]
             elif ring % 3 == 1:
-                color = theme['colors'][1 % len(theme['colors'])] # Medie
+                color = theme['colors'][1 % len(theme['colors'])]
             else:
-                color = theme['colors'][2 % len(theme['colors'])] # Alte
+                color = theme['colors'][2 % len(theme['colors'])]
 
-            # Disegna poligono
             if len(points) > 2:
-                # Spessore del contorno o opacità del riempimento scalati da effective_energy
-                outline_width = max(1, int(3 * effective_energy)) # Più sottile per volume basso
+                outline_width = max(1, int(3 * effective_energy))
 
                 if ring % 2 == 0:
-                    # Riempito
                     r, g, b = hex_to_rgb(color)
-                    alpha = int(100 + effective_energy * 155) # Opacità basata su effective_energy
+                    alpha = int(100 + effective_energy * 155)
                     fill_color_rgb = (r, g, b, alpha)
-                    draw.polygon(points, fill=fill_color_rgb) # PIL supporta RGBA per fill
+                    draw.polygon(points, fill=fill_color_rgb)
                 else:
-                    # Solo contorno
                     draw.polygon(points, outline=color, width=outline_width)
-
-    return img
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
+    return img.convert('RGB')
 
 def create_neural_network(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                         theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Crea visualizzazione rete neurale pulsante."""
+                         theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                         background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                         text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGB', (width, height), theme['background'])
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
@@ -641,7 +655,6 @@ def create_neural_network(features: Dict[str, Any], frame_idx: int, resolution: 
         current_energy = features['rms_energy'][time_idx]
         effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
 
-        # Nodi della rete
         nodes = []
         grid_size = 8
 
@@ -650,58 +663,58 @@ def create_neural_network(features: Dict[str, Any], frame_idx: int, resolution: 
                 x = int((i + 1) / (grid_size + 1) * width)
                 y = int((j + 1) / (grid_size + 1) * height)
 
-                # Attivazione nodo basata su energia effettiva e posizione
                 activation = effective_energy + 0.3 * np.sin(frame_idx * 0.1 + i + j)
                 activation = max(0, min(1, activation))
 
                 nodes.append((x, y, activation))
 
-        # Connessioni tra nodi vicini
         for i, (x1, y1, act1) in enumerate(nodes):
             for j, (x2, y2, act2) in enumerate(nodes[i+1:], i+1):
                 distance = np.sqrt((x2-x1)**2 + (y2-y1)**2)
 
-                # Connetti solo nodi vicini
                 if distance < min(width, height) * 0.2:
-                    # Intensità connessione
-                    connection_strength = (act1 + act2) / 2 * intensity # act1 e act2 già influenzati dall'offset
+                    connection_strength = (act1 + act2) / 2 * intensity
 
                     if connection_strength > 0.3:
-                        # Spessore linea
                         line_width = max(1, int(connection_strength * 3))
 
-                        # Colore connessione usando i colori personalizzati
-                        # Colore basato sull'intensità della connessione o sulla posizione
-                        if connection_strength < 0.5: # Connessioni più deboli (basse freq)
+                        if connection_strength < 0.5:
                             color = theme['colors'][0]
-                        elif connection_strength < 0.75: # Connessioni medie
+                        elif connection_strength < 0.75:
                             color = theme['colors'][1 % len(theme['colors'])]
-                        else: # Connessioni forti (alte freq)
+                        else:
                             color = theme['colors'][2 % len(theme['colors'])]
 
                         draw.line([x1, y1, x2, y2], fill=color, width=line_width)
 
-        # Disegna nodi
         for x, y, activation in nodes:
             if activation > 0.2:
                 node_size = int(3 + activation * 8 * intensity)
-                # Colore nodo basato sull'attivazione
                 if activation < 0.5:
-                    color = theme['colors'][0] # Basse
+                    color = theme['colors'][0]
                 elif activation < 0.75:
-                    color = theme['colors'][1 % len(theme['colors'])] # Medie
+                    color = theme['colors'][1 % len(theme['colors'])]
                 else:
-                    color = theme['colors'][2 % len(theme['colors'])] # Alte
+                    color = theme['colors'][2 % len(theme['colors'])]
 
                 draw.ellipse([x-node_size, y-node_size, x+node_size, y+node_size], fill=color)
-
-    return img
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
+    return img.convert('RGB')
 
 def create_galaxy_spiral(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                        theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Crea spirale galattica in movimento."""
+                        theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                        background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                        text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGB', (width, height), theme['background'])
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
@@ -711,7 +724,6 @@ def create_galaxy_spiral(features: Dict[str, Any], frame_idx: int, resolution: T
         effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
         center_x, center_y = width // 2, height // 2
 
-        # Parametri spirale
         num_arms = 3
         points_per_arm = 100
 
@@ -720,116 +732,101 @@ def create_galaxy_spiral(features: Dict[str, Any], frame_idx: int, resolution: T
 
             points = []
             for i in range(points_per_arm):
-                # Parametro spirale
-                t = i / points_per_arm * 6 * np.pi  # 3 giri
-
-                # Raggio crescente, scalato da effective_energy
+                t = i / points_per_arm * 6 * np.pi
                 radius = (i / points_per_arm) * min(width, height) * 0.4
                 radius *= (1 + effective_energy * intensity * 0.3)
-
-                # Angolo con rotazione
                 angle = t + arm_offset + frame_idx * 0.02 * intensity
 
-                # Posizione
                 x = int(center_x + radius * np.cos(angle))
                 y = int(center_y + radius * np.sin(angle))
 
                 points.append((x, y))
 
-            # Colore braccio spirale usando i colori personalizzati
-            # Basiamo il colore sull'indice del braccio o sull'energia complessiva
             if arm == 0:
-                color = theme['colors'][0] # Basse
+                color = theme['colors'][0]
             elif arm == 1:
-                color = theme['colors'][1 % len(theme['colors'])] # Medie
+                color = theme['colors'][1 % len(theme['colors'])]
             else:
-                color = theme['colors'][2 % len(theme['colors'])] # Alte
+                color = theme['colors'][2 % len(theme['colors'])]
 
-            # Disegna spirale come linea continua
             if len(points) > 1:
                 for i in range(len(points) - 1):
-                    # Intensità diminuisce verso l'esterno
                     intensity_factor = 1 - (i / len(points))
-                    line_width = max(1, int(2 + effective_energy * 3 * intensity_factor)) # Spessore scalato dall'offset
+                    line_width = max(1, int(2 + effective_energy * 3 * intensity_factor))
                     draw.line([points[i], points[i + 1]], fill=color, width=line_width)
 
-            # Stelle lungo la spirale
-            star_density = int(10 + effective_energy * 20) # Densità stelle scalata dall'offset
+            star_density = int(10 + effective_energy * 20)
             for star in range(star_density):
                 point_idx = random.randint(0, len(points) - 1)
                 if point_idx < len(points):
                     star_x, star_y = points[point_idx]
-                    # Piccola perturbazione
                     star_x += random.randint(-5, 5)
                     star_y += random.randint(-5, 5)
 
                     star_size = random.randint(1, 3)
                     draw.ellipse([star_x-star_size, star_y-star_size,
                                 star_x+star_size, star_y+star_size], fill=color)
-
-    return img
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
+    return img.convert('RGB')
 
 def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                          theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Crea tempesta elettrica musicale."""
+                          theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                          background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                          text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGB', (width, height), theme['background'])
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
 
     if time_idx >= 0:
         current_energy = features['rms_energy'][time_idx]
-        effective_energy = np.clip(current_energy * global_volume_offset, 0, 1) # Applica offset
+        effective_energy = np.clip(current_energy * global_volume_offset, 0, 1)
         onset_strength = features['onset_strength'][time_idx]
 
-        # Numero fulmini basato su energia effettiva e onset
         num_lightning = int(1 + onset_strength * 8 + effective_energy * 5)
 
         for lightning in range(num_lightning):
-            # Punto di partenza (alto)
             start_x = random.randint(0, width)
             start_y = random.randint(0, height // 4)
 
-            # Punto di arrivo (basso)
             end_x = start_x + random.randint(-width//4, width//4)
             end_y = random.randint(3*height//4, height)
 
-            # Segmenti fulmine
             current_x, current_y = start_x, start_y
 
-            segments = 8 + int(effective_energy * 12) # Segmenti scalati dall'offset
+            segments = 8 + int(effective_energy * 12)
 
             for segment in range(segments):
-                # Punto successivo
                 progress = (segment + 1) / segments
 
                 target_x = start_x + (end_x - start_x) * progress
                 target_y = start_y + (end_y - start_y) * progress
 
-                # Perturbazione casuale
                 offset_x = random.randint(-20, 20) * intensity
                 offset_y = random.randint(-10, 10) * intensity
                 next_x = int(target_x + offset_x)
                 next_y = int(target_y + offset_y)
 
-                # Colore fulmine usando i colori personalizzati
-                # Scegliamo un colore in base all'energia o all'indice del fulmine
                 if lightning % 3 == 0:
-                    color = theme['colors'][0] # Basse
+                    color = theme['colors'][0]
                 elif lightning % 3 == 1:
-                    color = theme['colors'][1 % len(theme['colors'])] # Medie
+                    color = theme['colors'][1 % len(theme['colors'])]
                 else:
-                    color = theme['colors'][2 % len(theme['colors'])] # Alte
+                    color = theme['colors'][2 % len(theme['colors'])]
 
-
-                # Spessore basato su intensità effettiva
                 line_width = max(1, int(1 + effective_energy * 4))
 
-                # Disegna segmento
                 draw.line([current_x, current_y, next_x, next_y], fill=color, width=line_width)
 
-                # Effetto glow
                 for glow in range(1, 4):
                     glow_width = line_width + glow
                     r, g, b = hex_to_rgb(color)
@@ -847,15 +844,24 @@ def create_lightning_storm(features: Dict[str, Any], frame_idx: int, resolution:
                     
                     draw.line([current_x, current_y, next_x, next_y], fill=final_glow_color, width=glow_width)
 
-                current_x, current_y = next_x, next_y # Questa riga deve essere a livello del ciclo 'for segment'
-
-    return img
+                current_x, current_y = next_x, next_y
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
+    return img.convert('RGB')
 
 def create_barcode_visualizer(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
-                              theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float) -> Image.Image:
-    """Crea una visualizzazione stile codice a barre più simile ai tuoi esempi."""
+                              theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
+                              background_image: Optional[Image.Image], custom_text: str, text_font: Any,
+                              text_color: str, text_position: str) -> Image.Image:
     width, height = resolution
-    img = Image.new('RGB', (width, height), theme['background'])
+    
+    if background_image:
+        img = background_image.resize(resolution, Image.LANCZOS).copy()
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+    else:
+        img = Image.new('RGBA', (width, height), (*hex_to_rgb(theme['background']), 255))
+    
     draw = ImageDraw.Draw(img)
 
     time_idx = get_time_idx(features, frame_idx, fps)
@@ -871,75 +877,63 @@ def create_barcode_visualizer(features: Dict[str, Any], frame_idx: int, resoluti
         else:
             stft_slice_norm = np.zeros_like(stft_slice)
 
-        num_bars = 100 # Un buon numero per un effetto "barcode" visibile
-        bar_spacing_ratio = 0.1 # Ratio dello spazio rispetto alla larghezza della barra
+        num_bars = 100
+        bar_spacing_ratio = 0.1
         
-        # Calcola la larghezza nominale di ogni barra inclusi gli spazi
         nominal_bar_total_width = width / num_bars
         bar_width = nominal_bar_total_width * (1 - bar_spacing_ratio)
-        bar_space = nominal_bar_total_width * bar_spacing_ratio
+        # bar_space = nominal_bar_total_width * bar_spacing_ratio # Non usato direttamente
 
         for i in range(num_bars):
             x_start = int(i * nominal_bar_total_width)
             x_end = int(x_start + bar_width)
 
-            if x_start >= width: continue # Assicurati che non disegni fuori dai limiti
+            if x_start >= width: continue
 
-            # Mappa la barra corrente a una porzione dello spettro di frequenza
             freq_slice_start_bin = int((i / num_bars) * len(stft_slice_norm))
             freq_slice_end_bin = int(((i + 1) / num_bars) * len(stft_slice_norm))
             
-            if freq_slice_start_bin >= len(stft_slice_norm): continue # Limite superiore
+            if freq_slice_start_bin >= len(stft_slice_norm): continue
             
-            # Calcola la magnitudine media della frequenza per questa barra
             bar_freq_magnitude = np.mean(stft_slice_norm[freq_slice_start_bin:freq_slice_end_bin]) if freq_slice_end_bin > freq_slice_start_bin else 0
 
-            # Altezza massima della colonna basata sull'energia generale e sulla magnitudine della frequenza
             max_col_height = height * 0.9 * intensity
             current_col_height = int(max_col_height * effective_energy * (0.5 + 0.5 * bar_freq_magnitude))
-            current_col_height = max(5, min(current_col_height, height - 10)) # Altezza minima, prevenire overflow
+            current_col_height = max(5, min(current_col_height, height - 10))
 
-            # Colore della barra in base alla sua posizione nello spettro
             colors = theme['colors']
-            color_index = int((bar_freq_magnitude) * (len(colors) - 1)) # Colore basato sulla magnitudine della freq
+            color_index = int((bar_freq_magnitude) * (len(colors) - 1))
             color_index = min(color_index, len(colors) - 1)
             bar_color = colors[color_index]
             
-            # --- Effetto "rotto" ---
-            # Suddividiamo l'altezza in segmenti discreti
-            num_vertical_segments = 15 # Numero di possibili "slot" verticali
+            num_vertical_segments = 15
             segment_unit_height = current_col_height / num_vertical_segments
 
-            # La probabilità di disegnare un segmento aumenta con l'onset_strength e la magnitudine della frequenza
-            segment_draw_prob_base = 0.3 # Probabilità base
+            segment_draw_prob_base = 0.3
             segment_draw_prob = segment_draw_prob_base + (0.7 * onset_strength) + (0.3 * bar_freq_magnitude)
             segment_draw_prob = np.clip(segment_draw_prob, 0, 1)
 
             for seg_idx in range(num_vertical_segments):
-                # Posizione Y di partenza per il segmento
                 seg_y_base = (height - current_col_height) // 2 + seg_idx * segment_unit_height
 
-                # Altezza del segmento individuale, con casualità e influenza dell'onset
-                # Un segmento può essere più alto se l'onset è forte
                 seg_height = max(1, int(segment_unit_height * (0.5 + 0.5 * random.random() * (1 + onset_strength))))
-                seg_height = min(seg_height, current_col_height - (seg_idx * segment_unit_height)) # Non superare altezza rimanente
+                seg_height = min(seg_height, current_col_height - (seg_idx * segment_unit_height))
 
-                # Offset Y casuale per l'effetto "rotto", scalato da onset_strength e intensity
                 y_offset_random = random.uniform(-onset_strength * height * 0.02 * intensity, 
                                                  onset_strength * height * 0.02 * intensity)
                 
                 segment_y1 = int(seg_y_base + y_offset_random)
                 segment_y2 = int(segment_y1 + seg_height)
 
-                # Assicurati che il segmento rimanga all'interno dell'immagine
                 segment_y1 = max(0, min(segment_y1, height))
                 segment_y2 = max(0, min(segment_y2, height))
                 
-                # Decidi se disegnare il segmento
                 if random.random() < segment_draw_prob:
-                    if segment_y2 > segment_y1 and bar_width > 0: # Assicura altezza e larghezza positive
+                    if segment_y2 > segment_y1 and bar_width > 0:
                         draw.rectangle([x_start, segment_y1, x_end, segment_y2], fill=bar_color)
-    return img
+    
+    draw_text_on_frame(draw, resolution, custom_text, text_font, text_color, text_position) # DISEGNA TESTO
+    return img.convert('RGB')
 
 
 def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
@@ -948,7 +942,9 @@ def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
 def generate_artistic_visualization(features: Dict[str, Any], style: str, resolution: Tuple[int, int],
-                                  theme: Dict[str, Any], fps: int, intensity: float, global_volume_offset: float, output_dir: str) -> int:
+                                  theme: Dict[str, Any], fps: int, intensity: float, global_volume_offset: float,
+                                  output_dir: str, background_image: Optional[Image.Image], # AGGIUNTO
+                                  custom_text: str, text_font: Any, text_color: str, text_position: str) -> int: # AGGIUNTI
     """Genera visualizzazione artistica salvando direttamente su disco."""
     duration = features['duration']
     total_frames = int(duration * fps)
@@ -964,7 +960,7 @@ def generate_artistic_visualization(features: Dict[str, Any], style: str, resolu
         "Neural Network": create_neural_network,
         "Galaxy Spiral": create_galaxy_spiral,
         "Lightning Storm": create_lightning_storm,
-        "Barcode Visualizer": create_barcode_visualizer # Aggiunto il nuovo stile
+        "Barcode Visualizer": create_barcode_visualizer
     }
 
     style_func = style_functions.get(style, create_particle_system)
@@ -972,15 +968,16 @@ def generate_artistic_visualization(features: Dict[str, Any], style: str, resolu
     
     for frame_idx in range(actual_frames):
         try:
-            # Passa il nuovo parametro global_volume_offset a tutte le funzioni di stile
-            frame = style_func(features, frame_idx, resolution, theme, intensity, fps, global_volume_offset)
+            # Passa i nuovi parametri a tutte le funzioni di stile
+            frame = style_func(features, frame_idx, resolution, theme, intensity,
+                               global_volume_offset, background_image, # AGGIUNTO
+                               custom_text, text_font, text_color, text_position) # AGGIUNTI
             frame_path = os.path.join(output_dir, f"frame_{frame_idx:06d}.jpg")
-            frame.save(frame_path, format='JPEG', quality=85)  # Salva direttamente su disco
+            frame.save(frame_path, format='JPEG', quality=85)
             
             progress = (frame_idx + 1) / actual_frames
             progress_bar.progress(progress)
             
-            # Ottimizzazione memoria
             del frame
             if frame_idx % 50 == 0:
                 gc.collect()
@@ -989,12 +986,11 @@ def generate_artistic_visualization(features: Dict[str, Any], style: str, resolu
             st.error(f"Errore generazione frame {frame_idx}: {e}")
             break
             
-    return frame_idx + 1  # Numero di frame generati
+    return frame_idx + 1
 
 def create_video_ffmpeg_pipe(fps: int, output_path: str, audio_path: str, frame_dir: str, frame_count: int) -> bool:
     """Crea video usando FFmpeg con input da pipe (zero-copy)"""
     try:
-        # Comando FFmpeg con input da immagini
         ffmpeg_cmd = [
             'ffmpeg', '-y',
             '-f', 'image2pipe',
@@ -1011,12 +1007,10 @@ def create_video_ffmpeg_pipe(fps: int, output_path: str, audio_path: str, frame_
         
         process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
 
-        # Invia frame a FFmpeg via stdin
         for i in range(frame_count):
             frame_path = os.path.join(frame_dir, f"frame_{i:06d}.jpg")
             with open(frame_path, 'rb') as f:
                 process.stdin.write(f.read())
-            # Cancella frame dopo l'uso
             os.unlink(frame_path)
             
         process.stdin.close()
@@ -1036,67 +1030,91 @@ def main():
         layout="wide"
     )
 
-    # Titolo modificato con "by Loop507" più piccolo
     st.markdown("<h1>🎵 SoundWave Visualizer - Artistic Edition <span style='font-size: 0.5em;'>by Loop507</span></h1>", unsafe_allow_html=True)
     st.markdown("*Trasforma la tua musica in arte visiva*")
 
-    # Check FFmpeg
     if not check_ffmpeg():
         st.error("❌ FFmpeg non trovato. Installare FFmpeg per continuare.")
         st.stop()
 
-    # Sidebar configurazioni
     with st.sidebar:
         st.header("🎨 Configurazioni Artistiche")
 
-        # Stile artistico
         selected_style = st.selectbox(
             "Stile Visualizzazione",
             list(ARTISTIC_STYLES.keys()),
             format_func=lambda x: ARTISTIC_STYLES[x]
         )
 
-        # Selettori di colore personalizzati (sempre visibili)
         st.subheader("Colori Personalizzati")
         bg_color = st.color_picker("Colore Sfondo", value="#000015")
         
-        # Nomi dei colori cambiati
         color_low_freq = st.color_picker("Colore Basse Frequenze", value="#FF0080")
         color_mid_freq = st.color_picker("Colore Medie Frequenze", value="#00FF80")
         color_high_freq = st.color_picker("Colore Alte Frequenze", value="#8000FF")
         
-        # Creazione del dizionario del tema con i colori personalizzati
-        selected_theme_data = { # Rinominato per evitare conflitto con selected_theme (stringa)
+        selected_theme_data = {
             "colors": [color_low_freq, color_mid_freq, color_high_freq],
             "background": bg_color,
-            "style": "custom" # Indicatore che i colori sono personalizzati
+            "style": "custom"
         }
-        selected_theme_name = "Personalizzato" # Per visualizzazione nell'anteprima
+        selected_theme_name = "Personalizzato"
 
-
-        # Intensità movimento
         movement_intensity = st.selectbox(
             "Intensità Movimento",
             list(MOVEMENT_INTENSITY.keys())
         )
 
-        # NUOVO SLIDER: Volume Generale Offset
         global_volume_offset = st.slider(
             "Volume Generale (Offset)",
-            min_value=0.1,  # Permette di rendere il visualizzatore molto debole
-            max_value=3.0,  # Permette di renderlo molto forte
-            value=1.0,      # Valore predefinito (nessun offset)
+            min_value=0.1,
+            max_value=3.0,
+            value=1.0,
             step=0.1,
             help="Aggiusta l'impatto del volume generale del brano sulla visualizzazione. Valori più alti rendono le forme più grandi/reattive per lo stesso volume audio."
         )
 
-        # Risoluzione
+        # NUOVO: Caricamento immagine di sfondo
+        st.subheader("Immagine di Sfondo")
+        uploaded_background_image = st.file_uploader( # spostato in sidebar direttamente
+            "Carica Immagine di Sfondo (Opzionale)",
+            type=['png', 'jpg', 'jpeg'],
+            help="Questa immagine verrà utilizzata come sfondo per la visualizzazione."
+        )
+
+        background_image = None
+        if uploaded_background_image:
+            try:
+                background_image = Image.open(uploaded_background_image).convert("RGBA")
+            except Exception as e:
+                st.error(f"Errore caricamento immagine di sfondo: {e}")
+
+        # NUOVO: Opzioni Testo Personalizzato
+        st.subheader("Testo Personalizzato")
+        custom_text = st.text_input("Testo da visualizzare", "SoundWave Art")
+        text_font_size = st.slider("Dimensione Testo", min_value=10, max_value=100, value=30, step=5)
+        text_color = st.color_picker("Colore Testo", value="#FFFFFF")
+        text_position = st.selectbox(
+            "Posizione Testo",
+            ["Top-Left", "Top-Center", "Top-Right", "Bottom-Left", "Bottom-Center", "Bottom-Right", "Center"]
+        )
+        
+        text_font = ImageFont.load_default() # Inizializza con font predefinito
+        font_path = "arial.ttf" # Nome del file del font, assicurati che sia nella stessa directory
+        try:
+            if os.path.exists(font_path):
+                text_font = ImageFont.truetype(font_path, text_font_size)
+            else:
+                st.warning("Font 'arial.ttf' non trovato. Utilizzo font predefinito.")
+        except Exception as e:
+            st.warning(f"Errore caricamento font: {e}. Utilizzo font predefinito.")
+
+
         format_ratio = st.selectbox(
             "Formato Video",
             list(FORMAT_RESOLUTIONS.keys())
         )
 
-        # FPS
         fps = st.selectbox("Frame Rate", FPS_OPTIONS, index=1)
 
         st.markdown("---")
@@ -1106,7 +1124,6 @@ def main():
         **File max:** {MAX_FILE_SIZE//(1024*1024)} MB
         """)
 
-    # Upload file
     uploaded_file = st.file_uploader(
         "🎵 Carica il tuo file audio",
         type=['mp3', 'wav', 'flac', 'm4a', 'aac'],
@@ -1117,13 +1134,11 @@ def main():
         if not validate_audio_file(uploaded_file):
             st.stop()
 
-        # Salva file temporaneo
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
             tmp_file.write(uploaded_file.read())
             temp_audio_path = tmp_file.name
 
         try:
-            # Carica e processa audio
             with st.spinner("🎵 Analizzando audio..."):
                 y, sr, duration = load_and_process_audio(temp_audio_path)
 
@@ -1131,7 +1146,6 @@ def main():
                 st.error("Impossibile caricare il file audio.")
                 st.stop()
 
-            # Mostra info audio
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Durata", f"{duration:.1f}s")
@@ -1140,7 +1154,6 @@ def main():
             with col3:
                 st.metric("Risoluzione", f"{FORMAT_RESOLUTIONS[format_ratio][0]}x{FORMAT_RESOLUTIONS[format_ratio][1]}")
 
-            # Genera features avanzate
             with st.spinner("🧠 Generando features audio avanzate..."):
                 features = generate_enhanced_audio_features(y, sr, fps)
 
@@ -1148,9 +1161,7 @@ def main():
                 st.error("Errore nell'analisi audio.")
                 st.stop()
 
-            # Aggiungi analisi frequenze con range in Hz
             st.markdown("### 📊 Analisi Frequenze in Percentuali")
-            # Calcola medie globali per le bande di frequenza
             avg_bass = np.mean(features['freq_bass']) * 100 if features['freq_bass'].size > 0 else 0
             avg_mid = np.mean(features['freq_high_mid']) * 100 if features['freq_high_mid'].size > 0 else 0
             avg_high = np.mean(features['freq_brilliance']) * 100 if features['freq_brilliance'].size > 0 else 0
@@ -1184,7 +1195,6 @@ def main():
             """)
 
 
-            # Anteprima configurazione
             st.markdown("### 🎨 Anteprima Configurazione")
             col1, col2 = st.columns(2)
 
@@ -1203,22 +1213,19 @@ def main():
                 **Frames totali:** ~{int(duration * fps)}
                 """)
 
-            # Bottone genera
             if st.button("🚀 Genera Visualizzazione Artistica", type="primary"):
-                # theme e intensity sono già impostati in base ai selettori
                 intensity_value = MOVEMENT_INTENSITY[movement_intensity]
                 resolution = FORMAT_RESOLUTIONS[format_ratio]
                 
-                # Crea directory temporanea per i frame
                 with tempfile.TemporaryDirectory() as frame_dir:
-                    # Genera visualizzazione
                     with st.spinner("🎨 Creando arte visiva..."):
                         frame_count = generate_artistic_visualization(
-                            features, selected_style, resolution, selected_theme_data, fps, intensity_value, global_volume_offset, frame_dir
+                            features, selected_style, resolution, selected_theme_data, fps,
+                            intensity_value, global_volume_offset, frame_dir, background_image, # AGGIUNTO
+                            custom_text, text_font, text_color, text_position # AGGIUNTI
                         )
                     
                     if frame_count > 0:
-                        # Crea video
                         output_path = f"soundwave_artistic_{selected_style.lower().replace(' ', '_')}.mp4"
                         
                         with st.spinner("🎬 Creando video finale..."):
@@ -1229,10 +1236,8 @@ def main():
                         if success and os.path.exists(output_path):
                             st.success("✅ Video creato con successo!")
 
-                            # Mostra video
                             st.video(output_path)
 
-                            # Download
                             with open(output_path, 'rb') as video_file:
                                 st.download_button(
                                     "📥 Scarica Video",
@@ -1246,7 +1251,6 @@ def main():
                         st.error("❌ Nessun frame generato.")
 
         finally:
-            # Cleanup
             if os.path.exists(temp_audio_path):
                 os.unlink(temp_audio_path)
 
