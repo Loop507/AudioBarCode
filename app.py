@@ -575,8 +575,8 @@ def create_fluid_dynamics(features: Dict[str, Any], frame_idx: int, resolution: 
 
 def create_geometric_patterns(features: Dict[str, Any], frame_idx: int, resolution: Tuple[int, int],
                             theme: Dict[str, Any], intensity: float, fps: int, global_volume_offset: float,
-                            background_image: Optional[Image.Image], custom_text: str, text_font: Any,
-                            text_color: str, text_position: str) -> Image.Image:
+                            background_image: Optional[Image.Image], custom_text: str, text_font: Any, # <--- Corretto qui!
+                            text_color: str, text_position: str) -> Image.Image: # <--- E qui!
     width, height = resolution
     
     if background_image:
@@ -970,6 +970,7 @@ def generate_artistic_visualization(features: Dict[str, Any], style: str, resolu
         try:
             # Passa i nuovi parametri a tutte le funzioni di stile
             frame = style_func(features, frame_idx, resolution, theme, intensity,
+                               fps, # Ho aggiunto fps qui, era mancante in alcune chiamate!
                                global_volume_offset, background_image, # AGGIUNTO
                                custom_text, text_font, text_color, text_position) # AGGIUNTI
             frame_path = os.path.join(output_dir, f"frame_{frame_idx:06d}.jpg")
