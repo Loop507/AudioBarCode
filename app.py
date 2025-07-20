@@ -1,20 +1,18 @@
-# app.py - SoundWave Visualizer by Loop507
-
 import streamlit as st
 import numpy as np
 import librosa
 import os
 import subprocess
 import gc
-import cv2
+import tempfile
 from typing import Tuple, Optional
 from moviepy.editor import AudioFileClip, ImageSequenceClip
 from PIL import Image
 
 # Costanti
-MAX_DURATION = 300
+MAX_DURATION = 300  # secondi max
 MIN_DURATION = 1.0
-MAX_FILE_SIZE = 200 * 1024 * 1024
+MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
 
 FORMAT_RESOLUTIONS = {
     "16:9": (1280, 720),
@@ -61,6 +59,7 @@ def load_and_process_audio(file_path: str) -> Tuple[Optional[np.ndarray], Option
             st.error("Audio troppo corto.")
             return None, None, None
         if audio_duration > MAX_DURATION:
+            st.warning(f"Audio troppo lungo ({audio_duration:.1f}s). Verrà tagliato a {MAX_DURATION}s.")
             y = y[:int(MAX_DURATION * sr)]
             audio_duration = MAX_DURATION
         return y, sr, audio_duration
@@ -106,12 +105,6 @@ def generate_audio_features(y: np.ndarray, sr: int, fps: int) -> dict:
         st.error(f"Errore feature: {e}")
         return None
 
-def hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
-    hex_color = hex_color.lstrip('#')
-    lv = len(hex_color)
-    rgb = tuple(int(hex_color[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
-    return (rgb[2], rgb[1], rgb[0])
-
 def cleanup_files(*files):
     for file in files:
         try:
@@ -121,7 +114,7 @@ def cleanup_files(*files):
             pass
 
 def generate_spectrum_frames(features: dict, resolution: Tuple[int, int], fps: int, mode: str) -> list:
-    import cv2  # assicurati di avere opencv-python installato
+    import cv2
 
     width, height = resolution
     duration = features['duration']
@@ -186,15 +179,20 @@ def main():
         if not validate_audio_file(uploaded):
             return
 
-        temp_audio = f"temp_audio_{uploaded.name}"
-        with open(temp_audio, "wb") as f:
-            f.write(uploaded.read())
+        st.write(f"File size: {uploaded.size / 1024**2:.2f} MB")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+            tmp_file.write(uploaded.read())
+            temp_audio = tmp_file.name
 
         with st.spinner("Elaborazione audio..."):
             y, sr, duration = load_and_process_audio(temp_audio)
 
         if y is None:
+            cleanup_files(temp_audio)
             return
+
+        st.write(f"Audio duration: {duration:.2f} secondi")
 
         fps = st.selectbox("Seleziona FPS", options=[5, 10, 20, 30], index=3)
         aspect_ratio = st.selectbox("Formato video", options=list(FORMAT_RESOLUTIONS.keys()), index=0)
@@ -204,6 +202,7 @@ def main():
             features = generate_audio_features(y, sr, fps=fps)
 
         if features is None:
+            cleanup_files(temp_audio)
             return
 
         tempo = float(features.get('tempo', 0.0)) if features else 0.0
